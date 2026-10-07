@@ -47,6 +47,14 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.schema();
   }
 
+  /** Columns added after first deploy: SQLite needs ALTER TABLE for objects created earlier. */
+  private migrate(): void {
+    const has = (table: string, col: string) => this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray().some((r) => r.name === col);
+    if (!has("contributions", "flags")) this.sql.exec("ALTER TABLE contributions ADD COLUMN flags TEXT NOT NULL DEFAULT '[]'");
+    if (!has("contributions", "adds")) this.sql.exec("ALTER TABLE contributions ADD COLUMN adds TEXT NOT NULL DEFAULT '[]'");
+    if (!has("tasks", "base_commit")) this.sql.exec("ALTER TABLE tasks ADD COLUMN base_commit TEXT");
+  }
+
   private schema(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -77,6 +85,7 @@ export class ObjectiveDO extends DurableObject<Env> {
         created_at TEXT NOT NULL, resolution TEXT);
       CREATE TABLE IF NOT EXISTS spend(id TEXT PRIMARY KEY, task TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, actual INTEGER, state TEXT NOT NULL, at TEXT NOT NULL);
     `);
+    this.migrate();
   }
 
   // ---------- events and live fan-out ----------
