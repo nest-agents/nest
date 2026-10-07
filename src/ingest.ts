@@ -61,22 +61,51 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
     if (!diff.paths.length) { await reject("empty change"); break; }
     const id = await contributionId(env.ARTIFACTS_NAMESPACE, repo, sha);
     const requires = [...new Set([...authored, ...trailers.requires])].sort();
-    const result = await objective.registerContribution({
-      id, task: attempt.task, epoch: attempt.epoch, author: attempt.participant, repo, commit: sha, parent,
-      title: subjectLine(facts.message) || sha.slice(0, 7), message: facts.message.slice(0, 8000),
-      alternative: trailers.alternative ?? null, supersedes: trailers.supersedes ?? null,
-      paths: diff.paths.map((p) => p.path), adds: diff.paths.filter((p) => p.change === "add").map((p) => p.path), special: diff.special, requires, declared: trailers.requires,
-      cites: trailers.cites, assumes: trailers.assumes,
-    });
+    let result: { created: boolean };
+    try {
+      result = await objective.registerContribution({
+        id, task: attempt.task, epoch: attempt.epoch, author: attempt.participant, repo, commit: sha, parent,
+        title: subjectLine(facts.message) || sha.slice(0, 7), message: facts.message.slice(0, 8000),
+        alternative: trailers.alternative ?? null, supersedes: trailers.supersedes ?? null,
+        paths: diff.paths.map((p) => p.path), adds: diff.paths.filter((p) => p.change === "add").map((p) => p.path), special: diff.special, requires, declared: trailers.requires,
+        cites: trailers.cites, assumes: trailers.assumes,
+      });
+    } catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      // Rule violations are the contributor's to fix; anything else is retried by the workflow.
+      if (/NOT_YOUR_CONTRIBUTION|ALREADY_ACCEPTED|MISSING_DEPENDENCY|STALE_EPOCH|ATTEMPT_MISMATCH/.test(m)) { await reject(m); break; }
+      throw e;
+    }
     byCommit.set(sha, { id, requires });
     out.push({ commit: sha, status: result.created ? "registered" : "known", contribution: id });
-    if (result.created && !(await objective.isSwarm())) {
-      try {
-        await env.REVIEWS.create({ id: `review-${id}`, params: { objective: ws.objective, contribution: id } });
-      } catch { /* already started */ }
+  }
+  if (out.some((o) => o.status === "registered") && !(await objective.isSwarm())) await ensureReviews(env, ws.objective);
+  return out;
+}
+
+/**
+ * Every proposed contribution without a review gets a review workflow. Instance ids are derived from the
+ * contribution, so this is idempotent, and a review lost to a failed start is picked up by the next push.
+ */
+export async function ensureReviews(env: Env, objectiveId: string): Promise<{ started: string[]; failed: string[] }> {
+  const objective = objectiveStub(env, objectiveId);
+  const state = await objective.state();
+  const reviewed = new Set(state.reviews.map((r) => r.target));
+  const started: string[] = [];
+  const failed: string[] = [];
+  for (const c of state.contributions) {
+    if (c.status !== "proposed" || reviewed.has(c.id)) continue;
+    try {
+      await env.REVIEWS.create({ id: `review-${c.id}`, params: { objective: objectiveId, contribution: c.id } });
+      started.push(c.id);
+    } catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      if (/already|exists|duplicate/i.test(m)) continue;
+      failed.push(c.id);
+      await objective.log("Workflows", "review-start-failed", `Could not start the review of ${c.title}: ${m.slice(0, 200)}`, { contribution: c.id });
     }
   }
-  return out;
+  return { started, failed };
 }
 
 type PushEvent = { repo: string; ref: string; after: string };

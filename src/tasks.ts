@@ -3,7 +3,7 @@
 
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
+import { agentComputer, objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
 
 export class TaskError extends Error {
   constructor(readonly code: string, message = code) {
@@ -65,7 +65,7 @@ export async function stopTask(env: Env, taskId: string) {
   if (t.status !== "running") throw new TaskError("NOT_RUNNING");
   let published: unknown[] = [];
   if (t.participant && t.repo) {
-    const computer = env.COMPUTERS.getByName(`agent-${taskId}-e${t.epoch}`);
+    const computer = env.COMPUTERS.getByName(agentComputer(t.repo));
     const stopped = await computer.stopAgent().catch(() => ({ uncommitted: "", head: "" }));
     if (stopped.head) {
       await computer.exec(["bash", "-lc", "git push --quiet origin HEAD:main || true"], "/workspace/repo").catch(() => undefined);

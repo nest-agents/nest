@@ -4,7 +4,7 @@
 import { ArtifactsClient } from "./artifacts";
 import { authenticate, participantToken, type Principal } from "./auth";
 import { citeOf, parseContextFile } from "./context";
-import { ingestPush } from "./ingest";
+import { ensureReviews, ingestPush } from "./ingest";
 import { contextRepo, objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, workspaceRepo } from "./names";
 import { buildPack } from "./packs";
 import type { ContextItem } from "./project";
@@ -61,7 +61,7 @@ export default {
       return await api(request, env, url, principal);
     } catch (e) {
       if (e instanceof HttpError) return fail(e.status, e.code, e.message);
-      const code = (e as { code?: string })?.code;
+      const code = (e as { code?: string })?.code ?? /^([A-Z][A-Z_]{2,})(?::|$)/.exec(e instanceof Error ? e.message : "")?.[1];
       if (typeof code === "string" && /^[A-Z_]+$/.test(code)) return fail(409, code, (e as Error).message);
       console.error("nest error", e);
       return fail(500, "INTERNAL", e instanceof Error ? e.message : String(e));
@@ -110,6 +110,21 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
   if (swarmStats && request.method === "GET") {
     require(p, "owner");
     return json(await env.OBJECTIVES.getByName(swarmStats[1]!).registrations());
+  }
+
+  if (route === "POST /api/admin/reconcile") {
+    require(p, "owner");
+    const artifacts = new ArtifactsClient(env.ARTIFACTS);
+    const backfilled: string[] = [];
+    for (const c of (await objective.state()).contributions) {
+      if (c.adds.length) continue;
+      const [facts, parent] = await Promise.all([artifacts.commit(c.repo, c.commit), artifacts.commit(c.repo, c.parent)]);
+      if (!facts) continue;
+      const diff = await artifacts.diffTrees(c.repo, parent?.tree ?? null, facts.tree);
+      const adds = diff.paths.filter((x) => x.change === "add").map((x) => x.path);
+      if (adds.length) { await objective.setAdds(c.id, adds); backfilled.push(c.id); }
+    }
+    return json({ backfilled, reviews: await ensureReviews(env, OBJECTIVE_ID) });
   }
 
   if (route === "POST /api/admin/computers/destroy") {

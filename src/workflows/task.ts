@@ -4,7 +4,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { ingestPush } from "../ingest";
 import { gatewayBase } from "../models";
-import { objectiveStub, projectRepo, projectStub, short } from "../names";
+import { agentComputer, objectiveStub, parseWorkspaceRepo, projectRepo, projectStub, short } from "../names";
 import { buildPack } from "../packs";
 
 type Params = { objective: string; task: string; epoch: number; participant: string; repo: string };
@@ -54,7 +54,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
     const { objective: oid, task: tid, epoch, participant: pid, repo } = event.payload;
     const env = this.env;
     const objective = objectiveStub(env, oid);
-    const computerName = `agent-${tid}-e${epoch}`;
+    const computerName = agentComputer(repo);
     const computer = env.COMPUTERS.getByName(computerName);
 
     const setup = await step.do("prepare the brief", async () => {
@@ -110,7 +110,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     let offset = 0;
     let paused = false;
-    const myGeneration = repo.split("--")[0]!.split(".")[1];
+    const myGeneration = parseWorkspaceRepo(repo)?.generation;
     for (let i = 0; i < 70; i++) {
       // A reset starts a new generation; an attempt from an older one shuts itself down.
       const stale = await step.do(`generation check ${i}`, async () => (await objective.generation().catch(() => null)) !== myGeneration);

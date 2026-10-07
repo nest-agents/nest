@@ -33,8 +33,9 @@ export type InboxItem = { id: string; kind: string; target: string; reasons: str
 export type NestEvent = { seq: number; at: string; svc: string; kind: string; text: string; data: string | null };
 
 export class ObjectiveError extends Error {
+  // Durable Object RPC keeps only the message, so the code leads it.
   constructor(readonly code: string, message = code) {
-    super(message);
+    super(message === code ? code : `${code}: ${message}`);
   }
 }
 
@@ -322,7 +323,14 @@ export class ObjectiveDO extends DurableObject<Env> {
     if (Number(attempt.cur) !== c.epoch || String(attempt.status) !== "running") throw new ObjectiveError("STALE_EPOCH", `attempt ${c.epoch} is fenced`);
     if (String(attempt.repo) !== c.repo || String(attempt.participant) !== c.author) throw new ObjectiveError("ATTEMPT_MISMATCH");
     for (const d of c.requires) if (!this.contribution(d)) throw new ObjectiveError("MISSING_DEPENDENCY", d);
-    if (c.supersedes && !this.contribution(c.supersedes)) throw new ObjectiveError("MISSING_DEPENDENCY", c.supersedes);
+    if (c.supersedes) {
+      // Superseding retires work, so it is only for your own unaccepted work. To replace someone else's
+      // work, publish an alternative and let the person choose.
+      const old = this.contribution(c.supersedes);
+      if (!old) throw new ObjectiveError("MISSING_DEPENDENCY", c.supersedes);
+      if (old.author !== c.author) throw new ObjectiveError("NOT_YOUR_CONTRIBUTION", `${c.supersedes} belongs to ${old.author}; publish an alternative instead`);
+      if (old.status === "accepted") throw new ObjectiveError("ALREADY_ACCEPTED", c.supersedes);
+    }
     const seq = Number(this.sql.exec<{ n: number | null }>("SELECT MAX(seq) n FROM contributions").one().n ?? 0) + 1;
     const now = new Date().toISOString();
     this.ctx.storage.transactionSync(() => {
@@ -334,7 +342,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       for (const d of c.requires) this.sql.exec("INSERT OR IGNORE INTO deps VALUES (?, ?)", c.id, d);
       for (const cite of c.cites)
         this.sql.exec("INSERT OR IGNORE INTO citations VALUES (?, 'contribution', ?, ?, ?)", c.id, cite.item, cite.version, cite.lines ? JSON.stringify(cite.lines) : null);
-      if (c.supersedes) this.sql.exec("UPDATE contributions SET status = 'superseded' WHERE id = ?", c.supersedes);
+      if (c.supersedes) this.sql.exec("UPDATE contributions SET status = 'superseded' WHERE id = ? AND author = ? AND status != 'accepted'", c.supersedes, c.author);
     });
     const who = this.participant(c.author);
     this.emit("Artifacts", "contribution", `${who?.name ?? c.author} pushed ${c.id.slice(2, 6)} ${c.title}`, { contribution: c.id, repo: c.repo, commit: c.commit });
@@ -349,6 +357,11 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("UPDATE contributions SET flags = ? WHERE id = ?", JSON.stringify(flags), id);
     this.emit("Nest", "flag", `${c.title}: ${reason}`, { contribution: id });
     this.reroute(id);
+  }
+
+  /** Backfill for contributions registered before Nest recorded which files they create. */
+  setAdds(id: string, adds: string[]): void {
+    this.sql.exec("UPDATE contributions SET adds = ? WHERE id = ?", JSON.stringify([...adds].sort()), id);
   }
 
   contribution(id: string): Contribution | null {

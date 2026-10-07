@@ -18,6 +18,9 @@ export function parseWorkspaceRepo(name: string): { objective: string; generatio
 
 export const candidateBranch = (id: string) => `cand-${id}`;
 
+/** One computer per workspace, so an attempt never finds an agent left running by an earlier generation. */
+export const agentComputer = (repo: string) => `agent.${repo}`;
+
 /** Workflow instance ids are global and permanent, so they carry the objective generation too. */
 export const taskWorkflowId = (generation: string, task: string, epoch: number) => `task-${generation}-${task}-e${epoch}`;
 
