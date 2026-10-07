@@ -390,6 +390,15 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     delete parsed.max_completion_tokens;
     delete parsed.max_output_tokens;
     parsed[field] = maxOut;
+    // Fields that change which model runs or what it costs beyond tokens: fallback model lists and routing
+    // (OpenRouter), priority tiers, several completions, and paid hosted tools. The forwarded body is this
+    // re-serialized object, so what was checked is exactly what is sent.
+    for (const k of ["models", "route", "provider", "plugins", "transforms", "service_tier", "background", "web_search_options"]) delete parsed[k];
+    if (parsed.n !== undefined) parsed.n = 1;
+    if (Array.isArray(parsed.tools)) {
+      const PAID = /^(web_search|web_search_preview|file_search|code_interpreter|image_generation|computer_use|computer_use_preview|mcp)/;
+      parsed.tools = (parsed.tools as { type?: unknown }[]).filter((t) => !PAID.test(String(t?.type ?? "")));
+    }
     const bodyText = JSON.stringify(parsed);
     const objective = objectiveStub(this.env, props.objective);
     const reservation = `${props.computer}-${crypto.randomUUID()}`;
