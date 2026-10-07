@@ -101,9 +101,11 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
 
   if (route === "POST /api/admin/reset") {
     require(p, "owner");
+    const { rewindToSeed } = await import("./accepting");
+    const seeds = await rewindToSeed(env);
     await objective.reset();
     await project.reset();
-    return json({ reset: true });
+    return json({ reset: true, seeds });
   }
 
   if (route === "POST /api/admin/swarm") {

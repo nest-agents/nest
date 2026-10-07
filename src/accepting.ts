@@ -111,3 +111,21 @@ export async function changeContext(env: Env, id: string, body: string, title?: 
   await objective.log("Artifacts", "context", mirrored.exitCode === 0 ? `Committed ${id} version ${parsed.version} to ${contextRepo(env)}` : `Context repo will catch up: ${mirrored.stderr.slice(0, 200)}`);
   return { checkpoint, radius };
 }
+
+/**
+ * Owner reset for rehearsals: move the project and context repositories' main back to their first
+ * commit, so the next bootstrap seeds from the original tree and requirements. The old history stays
+ * in Artifacts, unreferenced. Only the mirror and context computers may move these refs.
+ */
+export async function rewindToSeed(env: Env): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const [name, role, repo] of [["mirror", "mirror", projectRepo(env)], ["context-writer", "context", contextRepo(env)]] as const) {
+    const computer = env.COMPUTERS.getByName(name);
+    await computer.configure({ computer: name, role, objective: "harbor-export" });
+    const remote = `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${repo}.git`;
+    const r = await computer.exec(["bash", "-lc", `rm -rf /workspace/rewind && git clone --quiet ${remote} /workspace/rewind && cd /workspace/rewind && root=$(git rev-list --max-parents=0 HEAD | tail -1) && git push --quiet --force origin "$root:refs/heads/main" && echo "$root"`], "/workspace", {}, 180);
+    if (r.exitCode !== 0) throw new AcceptError("REWIND_FAILED", `${repo}: ${r.stderr.slice(-300)}`);
+    out[repo] = r.stdout.trim().split("\n").at(-1) ?? "";
+  }
+  return out;
+}
