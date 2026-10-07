@@ -1,7 +1,32 @@
 // Context packs and search. A pack is everything an agent or reviewer should know, with citations.
 
+import { ArtifactsClient } from "./artifacts";
 import { citeOf, compilePack, type Pack, type PackSection } from "./context";
-import { objectiveStub, projectStub, short } from "./names";
+import { estimateTokens } from "./domain/context";
+import { objectiveStub, projectRepo, projectStub, short } from "./names";
+
+/**
+ * The repository at a commit, as pack sections: a file map first, then source before tests before the
+ * rest, each file whole, stopping at the token budget. Large or binary files are listed but not included.
+ */
+export async function repositorySections(env: Env, repo: string, commit: string, label: string, budgetTokens: number): Promise<PackSection[]> {
+  const artifacts = new ArtifactsClient(env.ARTIFACTS);
+  const files = await artifacts.listFiles(repo, commit, 2000);
+  const rank = (p: string) => (p.startsWith("src/") ? 0 : p.startsWith("test/") ? 1 : p.startsWith("public/") ? 2 : 3);
+  const textual = /\.(ts|tsx|js|mjs|cjs|json|jsonc|md|css|html|txt|toml|yaml|yml)$/i;
+  const sections: PackSection[] = [{ title: `${label}: file map`, text: files.map((f) => f.path).join("\n") }];
+  let used = estimateTokens(sections[0]!.text);
+  for (const f of [...files].sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path))) {
+    if (!textual.test(f.path)) continue;
+    const text = await artifacts.readText(repo, commit, f.path, 400_000).catch(() => null);
+    if (text === null) continue;
+    const t = estimateTokens(text) + 30;
+    if (used + t > budgetTokens) continue;
+    used += t;
+    sections.push({ title: `${label}: ${f.path}`, text: "```\n" + text + "\n```" });
+  }
+  return sections;
+}
 
 type SearchHit = { cite: string; title: string; text: string; score: number };
 
@@ -49,6 +74,16 @@ export async function buildPack(env: Env, taskId: string, budgetTokens = 200_000
   }
   for (const item of context.filter((i) => !["requirement", "decision", "policy"].includes(i.kind)))
     optional.push({ title: `${item.kind}: ${item.title}`, cite: citeOf(item), text: item.body });
+  // Massive context: the whole accepted repository, then other agents' full diffs, within the budget.
+  const head = await project.head();
+  if (head) optional.push(...(await repositorySections(env, projectRepo(env), head.commit, `Repository at checkpoint ${head.version}`, Math.floor(budgetTokens * 0.5))));
+  if (others.length) {
+    const { contributionDiff } = await import("./workflows/review");
+    for (const c of others.filter((x) => x.status !== "blocked").slice(-12)) {
+      const diff = await contributionDiff(env, c.repo, c.parent, c.commit, c.paths, 40_000).catch(() => "");
+      if (diff) optional.push({ title: `Diff of ${c.id} "${c.title}" by ${people.get(c.author) ?? c.author}`, text: "```diff\n" + diff + "\n```" });
+    }
+  }
   if (task) {
     const hits = await searchContext(env, `${task.title} ${task.brief}`.slice(0, 400));
     for (const h of hits.results.slice(0, 8)) optional.push({ title: `Related: ${h.title}`, cite: h.cite, text: h.text });

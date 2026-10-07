@@ -56,8 +56,12 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
         ...notes.filter((n) => n.kind === "rejected").map((n) => `### Rejected approach: ${n.title} [${n.id}]\n${n.body}`),
       ].join("\n\n");
       const deps = c.requires.map((r) => state.contributions.find((x) => x.id === r)).filter(Boolean).map((d) => `- ${d!.id} ${d!.title}`).join("\n");
+      // Reviewers see the repository around the change, not only the diff: the contribution's own tree.
+      const { repositorySections } = await import("../packs");
+      const repoSections = await repositorySections(this.env, c.repo, c.commit, "Repository after this change", 60_000);
+      const repoText = repoSections.map((s) => `### ${s.title}\n${s.text}`).join("\n\n");
       return {
-        title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative,
+        title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative, repoText,
         author: author ? `${author.name} (${author.kind === "agent" ? author.model : "person"})` : c.author,
         participants: state.participants,
       };
@@ -115,7 +119,7 @@ ${input.diff}`;
         step.do(`review by ${reviewer.id} round ${round}`, retry, async () => {
           const messages: ChatMessage[] = [
             { role: "system", content: `You are ${reviewer.name}, an independent code reviewer (${reviewer.model}). Review only what this contribution claims to do; a coherent partial piece of a larger objective is fine. Judge it against the project's requirements and decisions and cite them exactly as given in brackets. Reply with JSON only.` },
-            { role: "user", content: `Project context:\n${input.contextText}\n\n---\n\n${subject}\n\n---\nReturn JSON: {"verdict":"approve"|"changes"|"block","confidence":0.0-1.0,"summary":"one or two sentences","findings":[{"path":"...","line":1,"severity":"low|medium|high","text":"...","cite":"req/...@vN"}]}\n- approve: correct for what it claims, consistent with requirements.\n- changes: fixable defects you can point to.\n- block: violates a requirement or takes an approach that cannot work.` },
+            { role: "user", content: `Project context:\n${input.contextText}\n\n---\n\n${input.repoText}\n\n---\n\n${subject}\n\n---\nReturn JSON: {"verdict":"approve"|"changes"|"block","confidence":0.0-1.0,"summary":"one or two sentences","findings":[{"path":"...","line":1,"severity":"low|medium|high","text":"...","cite":"req/...@vN"}]}\n- approve: correct for what it claims, consistent with requirements.\n- changes: fixable defects you can point to.\n- block: violates a requirement or takes an approach that cannot work.` },
           ];
           let parsed: Verdictish | null = null;
           let note = "";
