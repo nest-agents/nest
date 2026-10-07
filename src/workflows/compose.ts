@@ -172,7 +172,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       const broken = failed.filter((f) => passingAtHead.has(f.id));
       const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
       const atHead = new Map(baseline.map((k) => [k.id, k.status]));
-      await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok }, {
+      await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok, conflict: null }, {
         svc: "Sandbox",
         text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
       });
