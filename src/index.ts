@@ -76,10 +76,11 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
 
   if (route === "GET /api/state") {
     const head = await project.head();
-      const checkpoints = await project.checkpoints();
-      const context = await project.context();
-      const state = await objective.state();
-    return json({ head, checkpoints, context, ...state, me: p.kind });
+    const checkpoints = await project.checkpoints();
+    const context = await project.context();
+    const notes = await project.notes();
+    const state = await objective.state();
+    return json({ head, checkpoints, context, notes, ...state, me: p.kind });
   }
   if (route === "GET /api/live") {
     if (request.headers.get("upgrade") !== "websocket") throw new HttpError(426, "WEBSOCKET_REQUIRED");

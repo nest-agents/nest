@@ -114,8 +114,8 @@ export class Computer extends DurableObject<Env> {
   }
 
   /** "host" once candidate code may be running in this container; git access ends there. */
-  phase(): "compose" | "host" {
-    return this.ctx.storage.kv.get<"compose" | "host">("phase") ?? "compose";
+  phase(): "compose" | "host" | "unset" {
+    return this.ctx.storage.kv.get<"compose" | "host">("phase") ?? "unset";
   }
 
   /** Git credentials, cached per repository inside this Durable Object, never inside the container. */
@@ -301,10 +301,19 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
   }
 
   private async git(request: Request, url: URL, props: ComputerProps): Promise<Response> {
-    const m = /^\/git\/([^/]+)\/([^/]+?)\.git\/(.*)$/.exec(url.pathname);
-    if (!m || m[1] !== this.env.ARTIFACTS_NAMESPACE) return deny("unknown repository");
+    const m = /^\/git\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(url.pathname);
+    if (!m || m[1] !== this.env.ARTIFACTS_NAMESPACE) return deny("not a git smart-HTTP request for this namespace");
     const repo = m[2]!;
-    const pushing = m[3]!.startsWith("git-receive-pack") || url.searchParams.get("service") === "git-receive-pack";
+    const endpoint = m[3]!;
+    const service = url.searchParams.get("service");
+    // Exactly three request shapes exist in smart HTTP; anything else is refused.
+    const shape =
+      endpoint === "info/refs" && request.method === "GET" && (service === "git-upload-pack" || service === "git-receive-pack") ? (service === "git-receive-pack" ? "advertise-push" : "advertise-fetch")
+      : endpoint === "git-upload-pack" && request.method === "POST" && request.headers.get("content-type") === "application/x-git-upload-pack-request" ? "fetch"
+      : endpoint === "git-receive-pack" && request.method === "POST" && request.headers.get("content-type") === "application/x-git-receive-pack-request" ? "push"
+      : null;
+    if (!shape) return deny("unsupported git request");
+    const pushing = shape === "push" || shape === "advertise-push";
     const ws = parseWorkspaceRepo(repo);
     const isProject = repo === projectRepo(this.env);
     const isContext = repo === contextRepo(this.env);
@@ -319,7 +328,8 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
         pushRef = props.workspace ? { repo: props.workspace, ref: "refs/heads/main" } : null;
         break;
       case "runner":
-        if ((await computer.phase()) === "host") return deny("this computer hosts candidate code and has no git access");
+        // Git only while explicitly composing; hosting, or any unknown state, has no git access.
+        if ((await computer.phase()) !== "compose") return deny("this computer has no git access outside composition");
         readable = isProject || !!ws;
         pushRef = props.candidate ? { repo: projectRepo(this.env), ref: `refs/heads/${candidateBranch(props.candidate)}` } : null;
         break;
@@ -336,7 +346,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     if (pushing && (!pushRef || pushRef.repo !== repo)) return deny(`push to ${repo} is not allowed from this computer`);
 
     let body: ArrayBuffer | undefined;
-    if (pushing && request.method === "POST") {
+    if (shape === "push") {
       // The receive-pack request begins with pkt-lines "<old> <new> <ref>"; every ref must be the allowed one.
       body = await request.arrayBuffer();
       const refs = receivePackRefs(new Uint8Array(body));
@@ -346,7 +356,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     const headers = new Headers(request.headers);
     headers.delete("authorization");
     headers.set("authorization", `Bearer ${secret}`);
-    return fetch(new Request(url, { method: request.method, headers, body: body ?? (["GET", "HEAD"].includes(request.method) ? undefined : request.body) }));
+    return fetch(new Request(url, { method: request.method, headers, body: body ?? (request.method === "GET" ? undefined : request.body) }));
   }
 
   private async model(request: Request, url: URL, props: ComputerProps): Promise<Response> {
@@ -409,22 +419,45 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
 
 const deny = (message: string) => new Response(`${message}\n`, { status: 403 });
 
-/** Reads a model response stream for a usage report (Responses API or Chat Completions, streamed or not). */
+/**
+ * Reads the provider's structured usage report from a model response, streamed (SSE) or not. Only the
+ * provider's usage object counts: text the model writes can never lower the recorded cost. Returns null
+ * when no usage object appears, and the reservation (an upper bound) then stands.
+ */
 async function meter(stream: ReadableStream<Uint8Array>, model: string): Promise<number | null> {
   const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-  let tail = "";
-  let input: number | null = null;
-  let output: number | null = null;
+  let buffer = "";
+  let whole = "";
+  let usage: { input: number; output: number } | null = null;
+  const take = (obj: unknown) => {
+    if (!obj || typeof obj !== "object") return;
+    const o = obj as Record<string, unknown>;
+    const u = (o.usage ?? (o.response as Record<string, unknown> | undefined)?.usage) as Record<string, unknown> | undefined;
+    if (!u || typeof u !== "object") return;
+    const input = Number(u.input_tokens ?? u.prompt_tokens);
+    const output = Number(u.output_tokens ?? u.completion_tokens);
+    if (Number.isSafeInteger(input) && Number.isSafeInteger(output) && input >= 0 && output >= 0) usage = { input, output };
+  };
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    tail = (tail + value).slice(-20_000);
-    const i = /"(?:input_tokens|prompt_tokens)"\s*:\s*(\d+)/g;
-    const o = /"(?:output_tokens|completion_tokens)"\s*:\s*(\d+)/g;
-    for (const m of tail.matchAll(i)) input = Number(m[1]);
-    for (const m of tail.matchAll(o)) output = Number(m[1]);
+    buffer += value;
+    if (whole.length < 4_000_000) whole += value;
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") continue;
+      try { take(JSON.parse(data)); } catch { /* not a JSON event */ }
+    }
   }
-  if (input === null || output === null) return null;
+  if (!usage) {
+    try { take(JSON.parse(whole)); } catch { /* streamed, or not JSON */ }
+  }
+  if (!usage) return null;
+  const { input, output } = usage as { input: number; output: number };
   const p = priceFor(model);
   return Math.round(input * p.inPerToken + output * p.outPerToken);
 }
