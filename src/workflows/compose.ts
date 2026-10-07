@@ -128,7 +128,9 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
             await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
           }
           const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
-          await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${result.detail}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
+          // git's own advice ("hint: ...") is for a terminal, not for the person deciding.
+          const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
+          await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
           // A real overlap is a choice for a person, not a bug for an agent to rewrite.
           await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
           return { conflict: result.at };

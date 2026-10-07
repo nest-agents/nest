@@ -118,6 +118,7 @@ export async function reconcileConflict(env: Env, candidateId: string, participa
     await objective.setTaskReplaces(id, [x.id]);
   }
   await objective.resolveInbox(`conflict-${candidateId}`, `reconciling in ${id}`);
+  await objective.updateCandidate(candidateId, { status: "superseded", note: `Being reconciled in ${id}` });
   await objective.log("Durable Objects", "reconcile", `A person asked ${names.get(participantId) ?? participantId} to reconcile ${x.title} with ${kept.join(", ") || "the checkpoint"}`, { task: id, candidate: candidateId });
   return startTask(env, id, participantId, "agent");
 }
