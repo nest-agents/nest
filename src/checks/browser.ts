@@ -26,20 +26,17 @@ export async function exportByClick(
     browser = await puppeteer.launch(env.BROWSER);
     const page = await browser.newPage();
     await page.setViewport({ width: 720, height: 520, deviceScaleFactor: 2 });
-    const files: string[] = [];
-    const unread: { url: string; method: string; headers: Record<string, string> }[] = [];
-    page.on("response", async (r) => {
+    // The browser only tells us which request the click produced. Bodies are never read through the
+    // browser (that would buffer whatever the candidate sends); the same request is replayed through the
+    // container with a streaming cap, and that file is judged.
+    const seen: { url: string; method: string; viewer: string }[] = [];
+    page.on("response", (r) => {
       // Preflights carry no file, and a blob: or data: download replays a response already seen.
       if (r.request().method() === "OPTIONS" || !/^https?:/.test(r.url())) return;
       const type = r.headers()["content-type"] ?? "";
       const attachment = /attachment/i.test(r.headers()["content-disposition"] ?? "");
-      if (!type.startsWith("text/csv") && !attachment) return;
-      if (files.length + unread.length >= MAX_FILES) return;
-      if (Number(r.headers()["content-length"] ?? 0) > MAX_FILE_BYTES) { files.push(""); return; }
-      const body = (await r.text().catch(() => "")).slice(0, MAX_FILE_BYTES);
-      // A navigation that becomes a download has no readable body; fetch it again the same way.
-      if (body) files.push(body);
-      else unread.push({ url: r.url(), method: r.request().method(), headers: r.request().headers() });
+      if ((!type.startsWith("text/csv") && !attachment) || seen.length >= MAX_FILES) return;
+      seen.push({ url: r.url(), method: r.request().method(), viewer: r.request().headers()["x-harbor-viewer"] ?? VIEWER });
     });
     await page.goto(previewUrl, { waitUntil: "networkidle0", timeout: 15_000 });
     if (await page.$("#viewer")) await page.select("#viewer", VIEWER);
@@ -48,13 +45,16 @@ export async function exportByClick(
     if (!button) return { check: result("FAIL", 'no element with data-action="export" to click'), screenshot: await shot(page) };
     await button.click();
     const deadline = Date.now() + timeoutMs;
-    while (!files.length && !unread.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+    while (!seen.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
     const prefix = new URL(previewUrl).pathname.replace(/\/$/, "");
-    for (const u of unread.slice(0, 2)) {
+    const files: string[] = [];
+    for (const u of seen.slice(-2)) {
       const url = new URL(u.url);
       if (!url.pathname.startsWith(prefix) || !["GET", "POST"].includes(u.method)) continue;
-      const res = await refetch(url.pathname.slice(prefix.length) + url.search, u.headers["x-harbor-viewer"] ?? VIEWER, u.method);
+      if (u.viewer !== VIEWER) { files.push(""); continue; }
+      const res = await refetch(url.pathname.slice(prefix.length) + url.search, VIEWER, u.method);
       if (res.ok) files.push(await readCapped(res, MAX_FILE_BYTES));
+      else await res.body?.cancel();
     }
     await new Promise((r) => setTimeout(r, 300));
     const screenshot = await shot(page);

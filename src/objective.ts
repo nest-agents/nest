@@ -328,7 +328,8 @@ export class ObjectiveDO extends DurableObject<Env> {
       // work, publish an alternative and let the person choose.
       const old = this.contribution(c.supersedes);
       if (!old) throw new ObjectiveError("MISSING_DEPENDENCY", c.supersedes);
-      if (old.author !== c.author) throw new ObjectiveError("NOT_YOUR_CONTRIBUTION", `${c.supersedes} belongs to ${old.author}; publish an alternative instead`);
+      const reconciling = !!c.task && this.taskReplaces(c.task).includes(c.supersedes);
+      if (old.author !== c.author && !reconciling) throw new ObjectiveError("NOT_YOUR_CONTRIBUTION", `${c.supersedes} belongs to ${old.author}; publish an alternative instead`);
       if (old.status === "accepted") throw new ObjectiveError("ALREADY_ACCEPTED", c.supersedes);
     }
     const seq = Number(this.sql.exec<{ n: number | null }>("SELECT MAX(seq) n FROM contributions").one().n ?? 0) + 1;
@@ -357,6 +358,26 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("UPDATE contributions SET flags = ? WHERE id = ?", JSON.stringify(flags), id);
     this.emit("Nest", "flag", `${c.title}: ${reason}`, { contribution: id });
     this.reroute(id);
+  }
+
+  /** Where a conflicted composition stopped: the tree of everything before the conflicting contribution. */
+  setConflictBasis(candidateId: string, basis: { commit: string; at: string; before: string[] }): void {
+    this.setMeta(`basis:${candidateId}`, JSON.stringify(basis));
+  }
+
+  conflictBasis(candidateId: string): { commit: string; at: string; before: string[] } | null {
+    const v = this.meta(`basis:${candidateId}`);
+    return v ? JSON.parse(v) : null;
+  }
+
+  /** A reconcile task's work stands in for these contributions, which a person asked it to integrate. */
+  setTaskReplaces(taskId: string, ids: string[]): void {
+    this.setMeta(`replaces:${taskId}`, JSON.stringify(ids));
+  }
+
+  taskReplaces(taskId: string): string[] {
+    const v = this.meta(`replaces:${taskId}`);
+    return v ? JSON.parse(v) : [];
   }
 
   /** Check results for an accepted checkpoint under a context version: what "not broken" means for outcomes on it. */

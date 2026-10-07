@@ -299,6 +299,14 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json({ workflow: id });
   }
 
+  const reconcile = /^\/api\/candidates\/(k[0-9a-f]{10})\/reconcile$/.exec(url.pathname);
+  if (reconcile && request.method === "POST") {
+    require(p, "owner");
+    const b = await body<{ participant?: string }>(request);
+    const { reconcileConflict } = await import("./tasks");
+    return json(await reconcileConflict(env, reconcile[1]!, b.participant ?? env.AUTO_REPAIR_AGENT));
+  }
+
   const accept = /^\/api\/candidates\/([a-z0-9-]{4,64})\/accept$/.exec(url.pathname);
   if (accept && request.method === "POST") {
     require(p, "owner");

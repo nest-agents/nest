@@ -122,6 +122,11 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           candidateBranch(c.id),
         );
         if (!result.ok) {
+          if (result.partial && /^[0-9a-f]{40}$/.test(result.partial)) {
+            const before = c.order.slice(0, Math.max(0, c.order.indexOf(result.at)));
+            if (before.length) await objective.recordMaterialization(result.partial, before);
+            await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
+          }
           const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
           await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${result.detail}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
           // A real overlap is a choice for a person, not a bug for an agent to rewrite.

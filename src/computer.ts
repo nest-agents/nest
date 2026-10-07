@@ -206,7 +206,7 @@ export class Computer extends DurableObject<Env> {
    * contribution's commit in dependency order. Cherry-pick merges three ways against the commit's own
    * parent, so independent edits to one file combine and true overlaps stop with exact paths.
    */
-  async compose(props: ComputerProps, base: { remote: string; commit: string }, picks: { id: string; remote: string; commit: string }[], branch: string): Promise<{ ok: true; commit: string; tree: string } | { ok: false; at: string; paths: string[]; detail: string }> {
+  async compose(props: ComputerProps, base: { remote: string; commit: string }, picks: { id: string; remote: string; commit: string }[], branch: string): Promise<{ ok: true; commit: string; tree: string } | { ok: false; at: string; paths: string[]; detail: string; partial?: string }> {
     const host = `https://${this.env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${this.env.ARTIFACTS_NAMESPACE}/`;
     const sha = /^[0-9a-f]{40}$/;
     if (!/^cand-[a-z0-9-]{4,64}$/.test(branch)) throw new Error("invalid candidate branch");
@@ -232,7 +232,12 @@ export class Computer extends DurableObject<Env> {
       if (picked.exitCode !== 0) {
         const conflicted = await this.sh("git diff --name-only --diff-filter=U");
         await this.sh("git cherry-pick --abort || true");
-        return { ok: false, at: p.id, paths: conflicted.stdout.split("\n").filter(Boolean), detail: (picked.stderr || picked.stdout).slice(-2000) };
+        // Keep everything that did combine, so a reconcile task can start from exactly this tree.
+        const partial = await this.sh(`git push --quiet --force origin HEAD:refs/heads/${branch} && git rev-parse HEAD`, REPO_DIR, 120);
+        return {
+          ok: false, at: p.id, paths: conflicted.stdout.split("\n").filter(Boolean), detail: (picked.stderr || picked.stdout).slice(-2000),
+          partial: partial.exitCode === 0 ? partial.stdout.trim().split("\n").at(-1) : undefined,
+        };
       }
     }
     const head = await this.sh("git rev-parse HEAD && git rev-parse HEAD^{tree}");

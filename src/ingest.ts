@@ -66,7 +66,7 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
       result = await objective.registerContribution({
         id, task: attempt.task, epoch: attempt.epoch, author: attempt.participant, repo, commit: sha, parent,
         title: subjectLine(facts.message) || sha.slice(0, 7), message: facts.message.slice(0, 8000),
-        alternative: trailers.alternative ?? null, supersedes: trailers.supersedes ?? null,
+        alternative: trailers.alternative ?? null, supersedes: trailers.supersedes ?? (await objective.taskReplaces(attempt.task))[0] ?? null,
         paths: diff.paths.map((p) => p.path), adds: diff.paths.filter((p) => p.change === "add").map((p) => p.path), special: diff.special, requires, declared: trailers.requires,
         cites: trailers.cites, assumes: trailers.assumes,
       });

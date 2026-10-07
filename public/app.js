@@ -348,10 +348,10 @@ function inboxHtml() {
       if (!k) return "";
       const members = k.order.map((id) => S.contributions.find((x) => x.id === id)).filter(Boolean);
       const overlapping = members.filter((m) => m.paths.some((p) => (k.conflict ?? "").includes(p)));
-      return `<div class="card focus"><h4>Overlapping work in ${esc(k.name)}</h4><p>Real git could not combine these contributions. Keep one, and the others are blocked with that reason.</p>
+      return `<div class="card focus"><h4>Overlapping work in ${esc(k.name)}</h4><p>Real git could not combine these contributions. Keep one and the others are blocked with that reason, or have an agent reconcile them.</p>
         <div class="fail-line">${esc(k.conflict ?? "")}</div>
         ${overlapping.map((m) => `<div class="review"><div class="row" style="justify-content:space-between"><span class="who"><b>${esc(nameOf(m.author))}</b><span class="id">${esc(short(m.id))}</span></span>${owner() ? `<button class="btn small" data-keep="${esc(m.id)}" data-among="${esc(overlapping.map((x) => x.id).join(","))}" data-inbox="${esc(i.id)}" type="button">Keep this one</button>` : ""}</div><q>${esc(m.title)}</q><div class="meta"><span class="id">${m.paths.map(esc).join(", ")}</span></div></div>`).join("")}
-        ${owner() ? `<div class="row"><button class="btn small" data-resolve="${esc(i.id)}" type="button">Dismiss</button></div>` : ""}</div>`;
+        ${owner() ? `<div class="row"><button class="btn small primary" data-reconcile="${esc(k.id)}" type="button">Reconcile with an agent</button><button class="btn small" data-resolve="${esc(i.id)}" type="button">Dismiss</button></div>` : ""}</div>`;
     }
     const c = S.contributions.find((x) => x.id === i.target);
     if (!c) return "";
@@ -494,6 +494,18 @@ document.addEventListener("click", (e) => {
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";
     return act(() => api("/api/reviews", { method: "POST", body: JSON.stringify({ target: t.dataset.review, verdict: t.dataset.verdict, summary }) }), "Review recorded");
+  }
+  if (t.dataset.reconcile) {
+    const workers = S.participants.filter((p) => p.kind === "agent" && ["codex", "nest-agent"].includes(p.harness));
+    return modal(`<form class="form" id="rc"><h3>Reconcile the conflict</h3><p>The agent starts from everything that did combine, gets the conflicting change as data, and re-creates it on top. Its work replaces the conflicting contribution in every outcome.</p>
+      <div class="field"><label for="rc-who">Agent</label><select id="rc-who">${workers.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}, ${esc(w.model)}</option>`).join("")}</select></div>
+      <div class="row"><button class="btn small primary" type="submit">Start reconciling</button></div></form>`, (root, close) => {
+      root.querySelector("#rc").onsubmit = (ev) => {
+        ev.preventDefault();
+        const participant = root.querySelector("#rc-who").value;
+        act(async () => { await api(`/api/candidates/${t.dataset.reconcile}/reconcile`, { method: "POST", body: JSON.stringify({ participant }) }); close(); }, "Reconciling");
+      };
+    });
   }
   if (t.dataset.accept) {
     const c = S.candidates.find((x) => x.id === t.dataset.accept);
