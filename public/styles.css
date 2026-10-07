@@ -1,3 +1,8 @@
+/* Standalone page resets (the artifact viewer supplied these for the prototype). */
+[hidden] { display: none !important; }
+body { margin: 0; }
+img { max-width: 100%; }
+
 /* Work map: capability lanes in arrival order; context on the left feeds the work, decisions on the right close it. */
 :root {
   color-scheme: dark;
