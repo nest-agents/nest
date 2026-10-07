@@ -32,18 +32,25 @@ export type Subject = {
   authorFamily: string;
   paths: string[];
   citedItems: string[];
+  /** True when the change adds a symlink (mode 120000) or a submodule (mode 160000). */
+  specialEntries?: boolean;
 };
 
-/** Repo-relative, "./" stripped; anything that tries to climb out is treated as protected. */
-function normalizePath(path: string): string | null {
-  const parts: string[] = [];
-  for (const part of path.replace(/\\/g, "/").split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") return null;
-    parts.push(part);
-  }
-  return parts.join("/");
+/**
+ * Paths arrive as exact git tree paths from ingest. Nest never rewrites them: a path that is not
+ * already plain (printable ASCII segments, no "." or ".." segments, no empty segments, no trailing
+ * dot or space, no backslash) is unusual enough that a person should look.
+ */
+export function unusualPath(path: string): boolean {
+  if (!/^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/.test(path) || path.includes("\\")) return true;
+  return path.split("/").some((s) => s === "" || s === "." || s === ".." || /[. ]$/.test(s));
 }
+
+const protectedMatch = (path: string, rule: string) => {
+  const p = path.toLowerCase();
+  const q = rule.toLowerCase();
+  return q.endsWith("/") ? p.startsWith(q) || `${p}/` === q : p === q;
+};
 
 const validConfidence = (c: number) => Number.isFinite(c) && c >= 0 && c <= 1;
 
@@ -82,12 +89,11 @@ export function route(policy: ReviewPolicy, subject: Subject, reviews: ReviewFac
   if (verdicts.size > 1) reasons.push("Reviewers disagree");
   if (verdicts.has("block")) reasons.push("A reviewer blocked it");
   if (agents.some((r) => !validConfidence(r.confidence) || r.confidence < policy.minConfidence)) reasons.push("Reviewer confidence is low");
-  const protectedHit = subject.paths.filter((raw) => {
-    const p = normalizePath(raw);
-    if (p === null) return true;
-    return policy.protectedPaths.some((q) => (q.endsWith("/") ? p.startsWith(q) || `${p}/` === q : p === q));
-  });
+  const unusual = subject.paths.filter(unusualPath);
+  const protectedHit = subject.paths.filter((p) => !unusualPath(p) && policy.protectedPaths.some((q) => protectedMatch(p, q)));
   if (!subject.paths.length) reasons.push("Changed files are unknown");
+  if (unusual.length) reasons.push(`Unusual file paths: ${unusual.map((p) => JSON.stringify(p)).join(", ")}`);
+  if (subject.specialEntries) reasons.push("Adds a symlink or submodule");
   if (protectedHit.length) reasons.push(`Touches protected files: ${protectedHit.join(", ")}`);
   const owned = subject.citedItems.filter((i) => policy.humanOwnedItems.includes(i));
   if (owned.length && subject.authorKind === "agent") reasons.push(`Relies on human-owned context: ${owned.join(", ")}`);

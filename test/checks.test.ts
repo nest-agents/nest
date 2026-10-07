@@ -1,18 +1,21 @@
-// The trusted harness must not pre-decide the design: both export styles pass, the baseline fails
-// only on export checks, and a requirement change fails both until they are repaired.
-import { describe, expect, it } from "vitest";
-import { execFile } from "node:child_process";
+// The trusted checks must not pre-decide the design: both export styles pass, the baseline fails
+// only on export checks, and a requirement change fails both until they are repaired. The candidate
+// runs in its own process behind serve.mjs; the checks only see its HTTP responses.
+import { afterAll, describe, expect, it } from "vitest";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { runHarborChecks } from "../src/checks/harbor";
 
-const run = promisify(execFile);
 const ROOT = resolve(import.meta.dirname, "..");
-const HARNESS = join(ROOT, "checks/harbor-checks.mjs");
+const SERVER = join(ROOT, "checks/serve.mjs");
 const V1 = ["id", "title", "status", "internal_notes"];
 const V2 = ["id", "title", "status"];
+const children: ChildProcess[] = [];
+afterAll(() => { for (const c of children) c.kill("SIGKILL"); });
+let nextPort = 18_700 + Math.floor(Math.random() * 500);
 
 const CSV = `
 const COLUMNS = __COLUMNS__;
@@ -78,10 +81,24 @@ async function candidate(index?: string, columns: string[] = V1) {
 }
 
 async function check(dir: string, columns: string[]) {
-  const dataSha256 = createHash("sha256").update(await readFile(join(ROOT, "harbor/src/data.ts"))).digest("hex");
-  const { stdout } = await run("node", [HARNESS, dir, JSON.stringify({ columns, dataSha256 })], { timeout: 30_000 });
-  const out = JSON.parse(stdout) as { checks: { id: string; status: string; detail: string }[] };
-  return Object.fromEntries(out.checks.map((c) => [c.id, c.status]));
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  const dataSha256 = sha(await readFile(join(ROOT, "harbor/src/data.ts")));
+  const actual = sha(await readFile(join(dir, "src/data.ts")));
+  const port = nextPort++;
+  const child = spawn("node", [SERVER, dir, String(port)], { stdio: "ignore" });
+  children.push(child);
+  const base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100; i++) {
+    try { await fetch(`${base}/__nest/health`); break; } catch { await new Promise((r) => setTimeout(r, 50)); }
+  }
+  const call = (path: string, viewer: string | null, method = "GET") =>
+    fetch(new URL(path, base), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} });
+  try {
+    const results = await runHarborChecks(call, { columns, dataSha256 }, actual, 10_000);
+    return Object.fromEntries(results.map((c) => [c.id, c.status]));
+  } finally {
+    child.kill("SIGKILL");
+  }
 }
 
 const ALL_PASS = { "fixture-integrity": "PASS", "viewer-scope": "PASS", "export-api": "PASS", "export-columns": "PASS", "csv-format": "PASS", "export-ui": "PASS" };
@@ -103,5 +120,13 @@ describe("trusted Harbor checks", () => {
     const dir = await candidate(DIRECT);
     await writeFile(join(dir, "src/data.ts"), (await readFile(join(dir, "src/data.ts"), "utf8")) + "\n// tampered\n");
     expect((await check(dir, V1))["fixture-integrity"]).toBe("FAIL");
+  });
+  it("cannot be forged by candidate code that prints a fake verdict and exits", async () => {
+    const forged = `process.stdout.write(JSON.stringify({ checks: [{ id: "export-api", status: "PASS" }] }) + "\\n"); process.exit(0); export default { fetch() { return new Response("ok"); } };`;
+    const dir = await candidate();
+    await writeFile(join(dir, "src/index.ts"), forged);
+    const r = await check(dir, V1);
+    expect(r["export-api"]).not.toBe("PASS");
+    expect(r["viewer-scope"]).not.toBe("PASS");
   });
 }, 60_000);

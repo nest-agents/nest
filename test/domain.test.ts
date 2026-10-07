@@ -197,6 +197,14 @@ describe("review routing hardening", () => {
     }
     expect(route(DEFAULT_POLICY, { ...subject, paths: [] }, [triage, a("openai", "approve"), a("anthropic", "approve")]).state).toBe("needs-human");
   });
+  it("fails closed on path forms git would not normalize away", () => {
+    const ok = [triage, a("openai", "approve"), a("anthropic", "approve")];
+    for (const p of ["WRANGLER.JSONC", "src/data.ts ", "src/data.ts.", "src/d\u00e4ta.ts", "src\\data.ts", "/wrangler.jsonc", "src/\tx.ts"]) {
+      expect(route(DEFAULT_POLICY, { ...subject, paths: [p] }, ok).state, JSON.stringify(p)).toBe("needs-human");
+    }
+    expect(route(DEFAULT_POLICY, { ...subject, specialEntries: true }, ok).state).toBe("needs-human");
+    expect(route(DEFAULT_POLICY, { ...subject, paths: ["src/export.ts", "public/app.js"] }, ok).state).toBe("approved");
+  });
 });
 
 describe("acceptance", () => {
