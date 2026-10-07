@@ -101,78 +101,91 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     if (!plan.planned.length) return { composed: 0 };
 
     await Promise.all(plan.planned.map((c) =>
-      step.do(`compose ${c.id}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" }, async () => {
+      step.do(`compose ${c.id}`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "10 minutes" }, async () => {
         const prior = plan.existing.find((e) => e.id === c.id);
         if (prior && !["composing", "outdated"].includes(prior.status)) return { skipped: prior.status };
-        const note = c.reusedAcross.length
-          ? `Keeps ${c.reusedAcross.map((id) => `${short(id)} ${plan.picks[id]?.title ?? ""}`).join(", ")} from an approach that was not chosen.`
-          : null;
-        await objective.upsertCandidate({
-          id: c.id, name: c.name, baseVersion: plan.head.version, baseCommit: plan.head.commit, contextDigest: plan.head.contextDigest,
-          policyDigest: plan.head.policyDigest, order: c.order, choice: c.choice, status: "composing", commit: null, checks: [],
-          previewReady: false, note, conflict: null,
-        });
-        await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
-        const computerName = `runner-${c.id}`;
-        const computer = this.env.COMPUTERS.getByName(computerName);
-        const result = await computer.compose(
-          { computer: computerName, role: "runner", objective: objectiveId, candidate: c.id },
-          { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit },
-          c.order.map((id) => ({ id, remote: remoteOf(this.env, plan.picks[id]!.repo), commit: plan.picks[id]!.commit })),
-          candidateBranch(c.id),
-        );
-        if (!result.ok) {
-          if (result.partial && /^[0-9a-f]{40}$/.test(result.partial)) {
-            const before = c.order.slice(0, Math.max(0, c.order.indexOf(result.at)));
-            if (before.length) await objective.recordMaterialization(result.partial, before);
-            await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
-          }
-          const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
-          // git's own advice ("hint: ...") is for a terminal, not for the person deciding.
-          const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
-          await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
-          // A real overlap is a choice for a person, not a bug for an agent to rewrite.
-          await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
-          return { conflict: result.at };
+        if (!(await objective.claimComposition(c.id, event.instanceId))) return { skipped: "another composer has it" };
+        try {
+          return await composeOne.call(this, c);
+        } finally {
+          await objective.releaseComposition(c.id, event.instanceId);
         }
-        await objective.recordMaterialization(result.commit, c.order);
-        await objective.log("Sandbox", "candidate", `Cherry-picked ${c.order.length} contributions onto checkpoint ${plan.head.version} with real git`, { candidate: c.id, commit: result.commit });
-        const served = await computer.serveCandidate();
-        const candidateData = await artifacts.readBytes(projectRepo(this.env), result.commit, "src/data.ts");
-        const actual = candidateData ? await sha256Hex(candidateData) : "missing";
-        const call = (path: string, viewer: string | null, method = "GET") =>
-          computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
-        const checks: { id: string; status: string; detail: string }[] = served.ok
-          ? await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, actual, 25_000)
-          : HARBOR_CHECKS.map((id) => ({ id, status: "ERROR" as const, detail: `candidate did not start: ${served.detail}`.slice(0, 500) }));
-        if (served.ok) {
-          // A real browser clicks the button on the live preview; the screenshot goes on the outcome card.
-          const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method));
-          checks.push(click.check);
-          if (click.screenshot) await this.env.OBJECTS.put(`shots/${c.id}.png`, click.screenshot, { httpMetadata: { contentType: "image/png" } });
-        }
-        const failed = checks.filter((x) => x.status !== "PASS");
-        const state = await objective.state();
-        const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
-        const broken = failed.filter((f) => passingAtHead.has(f.id));
-        const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
-        const atHead = new Map(baseline.map((k) => [k.id, k.status]));
-        await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok }, {
-          svc: "Sandbox",
-          text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
-        });
-        if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
-        // Repair regressions only: a check that passed for this same selection of work before (for example
-        // under an older requirement version) and fails now. An unfinished objective is not a regression.
-        const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
-        const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
-        if (failed.length && membersApproved && served.ok && regressed.length) {
-          await openRepair(this.env, objective, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
-        }
-        return { status };
       }),
     ));
     return { composed: plan.planned.length };
+
+    // Hoisted, and called with the workflow as `this`; everything it closes over is set before it runs.
+    async function composeOne(this: ComposeWorkflow, c: (typeof plan.planned)[number]) {
+      const note = c.reusedAcross.length
+        ? `Keeps ${c.reusedAcross.map((id) => `${short(id)} ${plan.picks[id]?.title ?? ""}`).join(", ")} from an approach that was not chosen.`
+        : null;
+      await objective.upsertCandidate({
+        id: c.id, name: c.name, baseVersion: plan.head.version, baseCommit: plan.head.commit, contextDigest: plan.head.contextDigest,
+        policyDigest: plan.head.policyDigest, order: c.order, choice: c.choice, status: "composing", commit: null, checks: [],
+        previewReady: false, note, conflict: null,
+      });
+      await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
+      const computerName = `runner-${c.id}`;
+      const computer = this.env.COMPUTERS.getByName(computerName);
+      const result = await computer.compose(
+        { computer: computerName, role: "runner", objective: objectiveId, candidate: c.id },
+        { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit },
+        c.order.map((id) => ({ id, remote: remoteOf(this.env, plan.picks[id]!.repo), commit: plan.picks[id]!.commit })),
+        candidateBranch(c.id),
+      );
+      // A conflict names the files git could not merge. Anything else (clone, fetch, push) is ours: retry.
+      if (!result.ok && (!result.paths.length || ["clone", "base", "push"].includes(result.at))) throw new Error(`composition failed at ${result.at}: ${result.detail.slice(0, 300)}`);
+      if (!result.ok) {
+        if (result.partial && /^[0-9a-f]{40}$/.test(result.partial)) {
+          const before = c.order.slice(0, Math.max(0, c.order.indexOf(result.at)));
+          if (before.length) await objective.recordMaterialization(result.partial, before);
+          await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
+        }
+        const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
+        // git's own advice ("hint: ...") is for a terminal, not for the person deciding.
+        const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
+        await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
+        // A real overlap is a choice for a person, not a bug for an agent to rewrite.
+        await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
+        return { conflict: result.at };
+      }
+      await objective.recordMaterialization(result.commit, c.order);
+      await objective.resolveInbox(`conflict-${c.id}`, "composed cleanly");
+      await objective.log("Sandbox", "candidate", `Cherry-picked ${c.order.length} contributions onto checkpoint ${plan.head.version} with real git`, { candidate: c.id, commit: result.commit });
+      const served = await computer.serveCandidate();
+      const candidateData = await artifacts.readBytes(projectRepo(this.env), result.commit, "src/data.ts");
+      const actual = candidateData ? await sha256Hex(candidateData) : "missing";
+      const call = (path: string, viewer: string | null, method = "GET") =>
+        computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
+      const checks: { id: string; status: string; detail: string }[] = served.ok
+        ? await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, actual, 25_000)
+        : HARBOR_CHECKS.map((id) => ({ id, status: "ERROR" as const, detail: `candidate did not start: ${served.detail}`.slice(0, 500) }));
+      if (served.ok) {
+        // A real browser clicks the button on the live preview; the screenshot goes on the outcome card.
+        const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method));
+        checks.push(click.check);
+        if (click.screenshot) await this.env.OBJECTS.put(`shots/${c.id}.png`, click.screenshot, { httpMetadata: { contentType: "image/png" } });
+      }
+      const failed = checks.filter((x) => x.status !== "PASS");
+      const state = await objective.state();
+      const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
+      const broken = failed.filter((f) => passingAtHead.has(f.id));
+      const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
+      const atHead = new Map(baseline.map((k) => [k.id, k.status]));
+      await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok }, {
+        svc: "Sandbox",
+        text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
+      });
+      if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
+      // Repair regressions only: a check that passed for this same selection of work before (for example
+      // under an older requirement version) and fails now. An unfinished objective is not a regression.
+      const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
+      const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
+      if (failed.length && membersApproved && served.ok && regressed.length) {
+        await openRepair(this.env, objective, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
+      }
+      return { status };
+    }
   }
 }
 
@@ -184,10 +197,10 @@ function outcomeName(members: { task: string | null; author: string; title: stri
   const nameOf = (id: string) => state.participants.find((p) => p.id === id)?.name ?? id;
   const authors = [...new Set(members.map((m) => nameOf(m.author)))].sort();
   const by = authors.length > 1 ? `${authors.slice(0, -1).join(", ")} and ${authors.at(-1)}` : authors[0] ?? "nobody";
-  const approach = approaches.map((a) => state.tasks.find((t) => t.id === a.task)?.title).filter((t): t is string => !!t)
-    .map((t) => t.replace(/^(explore|try|build|add)\s+(an?|the)\s+/i, "")).map((t) => t[0]!.toUpperCase() + t.slice(1));
+  const tidy = (t: string) => { const x = t.replace(/^(explore|try|build|add)\s+(an?|the)\s+/i, ""); return x[0]!.toUpperCase() + x.slice(1); };
+  const approach = approaches.map((a) => state.tasks.find((t) => t.id === a.task)?.title).filter((t): t is string => !!t).map(tidy);
   // Without a chosen approach, name the features: the tasks the work was written for, minus repairs.
-  const features = [...new Set(members.filter((m) => m.task && !/^t_(repair|reconcile)-/.test(m.task)).map((m) => state.tasks.find((t) => t.id === m.task)?.title).filter((t): t is string => !!t))];
+  const features = [...new Set(members.filter((m) => m.task && !/^t_(repair|reconcile)-/.test(m.task)).map((m) => state.tasks.find((t) => t.id === m.task)?.title).filter((t): t is string => !!t).map(tidy))];
   const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)!.toLowerCase()}` : xs[0]!);
   const what = approach.length ? approach.join(" with ") : features.length ? list(features) : members.length === 1 ? members[0]!.title : `${members.length} contributions`;
   return `${what}, by ${by}`;

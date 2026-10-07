@@ -360,6 +360,25 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.reroute(id);
   }
 
+  /**
+   * One composer per outcome. Composition workflows overlap (each review can start one), and two of them
+   * composing the same outcome share its runner computer and corrupt each other's working tree.
+   */
+  claimComposition(candidateId: string, owner: string, leaseMs = 12 * 60_000): boolean {
+    const now = Date.now();
+    const held = this.meta(`compose:${candidateId}`);
+    if (held) {
+      const [who, at] = held.split("@");
+      if (who !== owner && now - Number(at) < leaseMs) return false;
+    }
+    this.setMeta(`compose:${candidateId}`, `${owner}@${now}`);
+    return true;
+  }
+
+  releaseComposition(candidateId: string, owner: string): void {
+    if (this.meta(`compose:${candidateId}`)?.startsWith(`${owner}@`)) this.sql.exec("DELETE FROM meta WHERE k = ?", `compose:${candidateId}`);
+  }
+
   /** Where a conflicted composition stopped: the tree of everything before the conflicting contribution. */
   setConflictBasis(candidateId: string, basis: { commit: string; at: string; before: string[] }): void {
     this.setMeta(`basis:${candidateId}`, JSON.stringify(basis));
