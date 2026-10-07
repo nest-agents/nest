@@ -145,7 +145,7 @@ describe("context", () => {
 });
 
 describe("review routing", () => {
-  const subject = { authorKind: "agent" as const, authorFamily: "openai", paths: ["src/csv.ts"], citedItems: ["req/csv"] };
+  const subject = { author: "wren", authorKind: "agent" as const, authorFamily: "openai", paths: ["src/csv.ts"], citedItems: ["req/csv"] };
   const triage: ReviewFact = { reviewer: "triage", kind: "agent", family: "workers-ai", verdict: "comment", confidence: 1, triage: true };
   const a = (family: string, verdict: ReviewFact["verdict"], confidence = 0.9): ReviewFact => ({ reviewer: family, kind: "agent", family, verdict, confidence });
   it("starts with triage, then asks reviewers from families other than the author's", () => {
@@ -169,8 +169,33 @@ describe("review routing", () => {
     expect(route(DEFAULT_POLICY, s, [triage, person])).toEqual({ state: "blocked", by: "people" });
   });
   it("reviews people's work the same way", () => {
-    const mine = { ...subject, authorKind: "person" as const, authorFamily: "person" };
+    const mine = { ...subject, author: "scott", authorKind: "person" as const, authorFamily: "person" };
     expect(route(DEFAULT_POLICY, mine, [triage, a("openai", "changes"), a("anthropic", "changes")])).toEqual({ state: "changes", by: "agents" });
+  });
+});
+
+describe("review routing hardening", () => {
+  const subject = { author: "scott", authorKind: "person" as const, authorFamily: "person", paths: ["src/ui.ts"], citedItems: [] };
+  const triage: ReviewFact = { reviewer: "triage", kind: "agent", family: "workers-ai", verdict: "comment", confidence: 1, triage: true };
+  const a = (family: string, verdict: ReviewFact["verdict"], confidence = 0.9): ReviewFact => ({ reviewer: family, kind: "agent", family, verdict, confidence });
+  it("never lets an author settle their own work", () => {
+    const self: ReviewFact = { reviewer: "scott", kind: "person", family: "person", verdict: "approve", confidence: 1 };
+    expect(route(DEFAULT_POLICY, subject, [self]).state).toBe("needs-triage");
+    expect(route(DEFAULT_POLICY, subject, [triage, self]).state).toBe("needs-reviewers");
+    const selfAgent: ReviewFact = { ...a("openai", "approve"), reviewer: "scott" };
+    expect(route(DEFAULT_POLICY, subject, [triage, selfAgent, a("anthropic", "approve")]).state).toBe("needs-reviewers");
+  });
+  it("treats invalid confidence as low and never needs zero reviewers", () => {
+    expect(route(DEFAULT_POLICY, subject, [triage, a("openai", "approve", Number.NaN), a("anthropic", "approve")]).state).toBe("needs-human");
+    expect(route(DEFAULT_POLICY, subject, [triage, a("openai", "approve", 1.5), a("anthropic", "approve")]).state).toBe("needs-human");
+    expect(route({ ...DEFAULT_POLICY, agentReviewers: 0 }, subject, [triage]).state).toBe("needs-reviewers");
+  });
+  it("normalizes paths before checking protection", () => {
+    for (const p of ["./wrangler.jsonc", "src/../wrangler.jsonc", ".nest//policy.md", ".nest"]) {
+      const r = route(DEFAULT_POLICY, { ...subject, paths: [p] }, [triage, a("openai", "approve"), a("anthropic", "approve")]);
+      expect(r.state, p).toBe("needs-human");
+    }
+    expect(route(DEFAULT_POLICY, { ...subject, paths: [] }, [triage, a("openai", "approve"), a("anthropic", "approve")]).state).toBe("needs-human");
   });
 });
 
