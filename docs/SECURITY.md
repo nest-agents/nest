@@ -32,6 +32,8 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 
 **Previews are sandboxed.** Candidate pages are served with `Content-Security-Policy: sandbox`. That gives them an opaque origin, so they never carry the owner's session and cannot call Nest's API.
 
+**The browser check judges files, not pages.** Browser Rendering clicks Export CSV in a remote browser that holds no Nest credentials. It captures the file the click produces, and the trusted fixture rules judge that file. A page can only pass by producing the right export for that viewer.
+
 **Identity is derived, never declared.**
 - A review's reviewer kind and model family come from the participant registry, and kinds are immutable.
 - Authors never count as reviewers of their own work.
@@ -40,7 +42,10 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 **Fencing is enforced twice.**
 - Pausing or stopping increments the epoch.
 - Ingest rejects commits from a stale attempt, and the Objective DO re-checks inside the registration transaction.
-- Workspace names, workflow IDs and tokens carry a generation, so nothing from before a reset maps onto new work.
+- Workspace names, workflow IDs, computers and tokens carry a generation, so nothing from before a reset maps onto new work.
+- An attempt from an older generation stands itself down and destroys its computer. A failed read of the generation never counts as stale.
+
+**Contributors can only retire their own work.** `Nest-Supersedes` names a contribution the same author wrote and that is not yet accepted. To replace someone else's work, an agent publishes an alternative, and a person chooses.
 
 **Routing fails closed.**
 - Policy floors (protected paths, reviewer count, confidence) cannot be lowered by policy.
@@ -53,7 +58,7 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 
 **Acceptance is a compare-and-swap.** The Project Durable Object advances the head only if the version, context digest and policy digest match, every required check passed exactly once, every member is approved, and stale citations carry the owner's context review.
 
-**Spend has a hard ceiling.** Every model call is reserved against the cap before it is sent and settled from provider usage afterwards. AI Gateway's own spend limit is a second, independent layer once the gateway is enabled.
+**Spend has a hard ceiling.** Every model call is reserved against the cap before it is sent and settled from provider usage afterwards. The ledger survives an owner reset, so a reset cannot escape the cap. AI Gateway's own spend limit is a second, independent layer once the gateway is enabled.
 
 ## How the code was hardened
 
@@ -70,6 +75,7 @@ A background security reviewer audited every commit. Each finding was fixed with
 - forged review identity;
 - spend replay;
 - injection guard bypasses (truncation, look-alikes, comments);
-- stale identities across resets.
+- stale identities across resets;
+- superseding another participant's work.
 
 The commit history records each fix.
