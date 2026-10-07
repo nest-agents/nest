@@ -1,0 +1,1078 @@
+<title>Nest Work Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Work map: capability lanes in arrival order; context on the left feeds the work, decisions on the right close it. */
+:root {
+  color-scheme: dark;
+  --ground: #090D15;
+  --panel: #0E1420;
+  --raised: #141C2B;
+  --line: #1F2939;
+  --line-strong: #2F3B52;
+  --text: #E4EAF4;
+  --muted: #8592A8;
+  --faint: #556078;
+  --neutral: #A9B4C7;
+  --signal: #5B9BFF;
+  --signal-soft: rgba(91, 155, 255, 0.16);
+  --signal-ink: #06101F;
+  --ink: #F5F8FC;
+  --font-ui: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-id: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r-panel: 12px;
+  --r-control: 8px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --ground: #EEF1F6; --panel: #FFFFFF; --raised: #F6F8FB; --line: #DCE2EC; --line-strong: #B8C2D3;
+    --text: #0C1320; --muted: #566174; --faint: #8A94A6; --neutral: #5E6B82;
+    --signal: #1C5FE5; --signal-soft: rgba(28, 95, 229, 0.11); --signal-ink: #FFFFFF; --ink: #0C1320;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #EEF1F6; --panel: #FFFFFF; --raised: #F6F8FB; --line: #DCE2EC; --line-strong: #B8C2D3;
+  --text: #0C1320; --muted: #566174; --faint: #8A94A6; --neutral: #5E6B82;
+  --signal: #1C5FE5; --signal-soft: rgba(28, 95, 229, 0.11); --signal-ink: #FFFFFF; --ink: #0C1320;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--ground); color: var(--text); font: 14px/1.45 var(--font-ui); -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 4px; }
+.id { font-family: var(--font-id); font-size: 0.86em; letter-spacing: 0; }
+
+.app { min-height: 100%; padding-inline: 16px; padding-block: 12px 16px; display: grid; grid-template-rows: auto 1fr; gap: 12px; }
+
+/* Header */
+.top { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; min-height: 48px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+.brand svg { width: 26px; height: 26px; }
+.crumbs { display: flex; align-items: baseline; gap: 8px; color: var(--muted); min-width: 0; }
+.crumbs strong { color: var(--text); font-weight: 600; font-size: 15px; }
+.crumbs .sep { color: var(--faint); }
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; }
+.chip.sim { border-style: dashed; }
+.chip.head b { font-variant-numeric: tabular-nums; }
+.chip.flash { animation: flash 900ms ease-out; }
+@keyframes flash { 0% { background: var(--signal-soft); border-color: var(--signal); } 100% { background: transparent; } }
+.theme-btn { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: transparent; color: var(--muted); font-size: 12.5px; }
+
+/* Shell */
+.shell { display: grid; grid-template-columns: 268px minmax(0, 1fr) 356px; gap: 12px; min-height: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-panel); min-width: 0; display: flex; flex-direction: column; }
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+.panel-head h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -0.005em; }
+.panel-head .aside { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* Context rail */
+.rail-body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.search { width: 100%; height: 34px; border-radius: var(--r-control); border: 1px solid var(--line-strong); background: var(--raised); padding: 0 10px; }
+.search::placeholder { color: var(--faint); }
+.store { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 12.5px; color: var(--muted); padding: 10px 12px; border-radius: var(--r-control); background: var(--raised); }
+.store b { color: var(--text); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+#ctxGroups { display: grid; gap: 16px; }
+.group h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ctx { width: 100%; text-align: left; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; margin-inline: -10px; width: calc(100% + 20px); border: 0; background: transparent; border-radius: var(--r-control); }
+.ctx:hover, .ctx.on { background: var(--raised); }
+.ctx .t { font-weight: 600; font-size: 13.5px; }
+.ctx .v { font-size: 12px; color: var(--muted); align-self: center; }
+.ctx .v.new { color: var(--signal); font-weight: 600; }
+.ctx .m { grid-column: 1 / -1; font-size: 12px; color: var(--faint); display: flex; gap: 10px; }
+.ctx.fresh { animation: flash 1400ms ease-out; }
+.empty-note { font-size: 12.5px; color: var(--faint); margin: 0; }
+
+/* Map */
+.map-panel { min-height: 0; }
+.map-tools { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.btn { height: 32px; padding: 0 12px; border-radius: var(--r-control); border: 1px solid var(--line-strong); background: transparent; font-weight: 600; font-size: 13px; }
+.btn:hover { border-color: var(--neutral); }
+.btn.primary { background: var(--signal); border-color: var(--signal); color: var(--signal-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btn.small { height: 28px; font-size: 12.5px; padding: 0 10px; }
+.stepper { display: flex; gap: 6px; padding: 0 16px 10px; flex-wrap: wrap; }
+.step { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px 0 5px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.step .n { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; border: 1px solid var(--line-strong); font-variant-numeric: tabular-nums; }
+.step.done { color: var(--text); }
+.step.done .n { background: var(--neutral); border-color: var(--neutral); color: var(--panel); }
+.step.now { color: var(--text); border-color: var(--signal); }
+.step.now .n { border-color: var(--signal); color: var(--signal); }
+.tasks { display: flex; gap: 8px; padding: 0 16px 12px; flex-wrap: wrap; }
+.task { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--r-control); background: var(--raised); font-size: 12.5px; color: var(--muted); }
+.task b { color: var(--text); font-weight: 600; }
+.task .state { font-weight: 600; }
+.task.running .state { color: var(--signal); }
+.task.paused .state { color: var(--text); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.task.running .dot { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.task.done .dot { background: var(--neutral); }
+.task.paused .dot { background: transparent; border: 1.5px solid var(--text); }
+.map-wrap { position: relative; overflow-x: auto; overflow-y: hidden; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+#map { display: block; }
+#scale { display: block; width: 100%; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 16px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { width: 14px; height: 14px; }
+
+/* SVG map styles */
+.lane-bg { fill: transparent; }
+.lane-bg.alt { fill: var(--raised); opacity: 0.55; }
+.lane-name { fill: var(--text); font-size: 12.5px; font-weight: 600; }
+.lane-sub { fill: var(--faint); font-size: 11px; }
+.bracket { stroke: var(--line-strong); fill: none; stroke-width: 1.2; }
+.spine { stroke: var(--line-strong); stroke-width: 1; }
+.spine-mark { fill: var(--panel); stroke: var(--faint); stroke-width: 1.2; }
+.spine-mark.on { fill: var(--signal); stroke: var(--signal); }
+.dep { fill: none; stroke: var(--line-strong); stroke-width: 1.2; }
+.dep.hl { stroke: var(--neutral); stroke-width: 1.6; }
+.thread { fill: none; stroke: var(--faint); stroke-width: 1.4; stroke-dasharray: 2 5; stroke-linecap: round; }
+.thread.sel { stroke: var(--signal); stroke-width: 3; stroke-dasharray: none; opacity: 0.85; }
+.cite { fill: none; stroke: var(--signal); stroke-width: 1.2; opacity: 0.55; }
+.cite-flow { fill: none; stroke: var(--signal); stroke-width: 1.6; }
+.hatch-line { stroke: var(--muted); stroke-width: 1.6; }
+.node { cursor: pointer; outline: none; }
+.node .body { stroke-width: 1.6; }
+.node .ini { font-size: 10px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.node .nid { font-family: var(--font-id); font-size: 10.5px; fill: var(--muted); text-anchor: middle; }
+.node .ring { fill: none; stroke: var(--signal); stroke-width: 2.4; }
+.node .ask { fill: none; stroke: var(--signal); stroke-width: 1.4; stroke-dasharray: 3 3; }
+.node .mark { stroke: var(--text); stroke-width: 1.6; stroke-linecap: round; }
+.node:focus-visible .body { stroke: var(--signal); stroke-width: 2.4; }
+.node.sel .body { stroke: var(--signal); stroke-width: 2.4; }
+.st-proposed .body { fill: var(--panel); stroke: var(--text); }
+.st-proposed .ini { fill: var(--text); }
+.st-approved .body { fill: var(--neutral); stroke: var(--neutral); }
+.st-approved .ini { fill: var(--panel); }
+.st-changes .body, .st-blocked .body, .st-superseded .body { fill: var(--panel); stroke: var(--muted); }
+.st-changes .ini, .st-blocked .ini, .st-superseded .ini { fill: var(--muted); }
+.st-superseded { opacity: 0.55; }
+.st-stale .body { fill: url(#hatch); stroke: var(--text); stroke-dasharray: 3 2; }
+.st-stale .ini { fill: var(--text); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.st-accepted .body { fill: var(--ink); stroke: var(--ink); }
+.st-accepted .ini { fill: var(--panel); }
+.tick { stroke-width: 1.3; }
+.tick.ok { fill: var(--neutral); stroke: var(--neutral); }
+.tick.ch { fill: none; stroke: var(--neutral); }
+.tick.bl { stroke: var(--text); }
+.tick.hm { fill: var(--signal); stroke: var(--signal); }
+.tick.hm-ch { fill: none; stroke: var(--signal); }
+.axis { fill: var(--faint); font-size: 11px; }
+.tip { position: absolute; pointer-events: none; background: var(--raised); border: 1px solid var(--line-strong); border-radius: var(--r-control); padding: 8px 10px; font-size: 12.5px; max-width: 260px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); z-index: 5; }
+.tip b { display: block; font-weight: 600; margin-bottom: 2px; }
+.tip span { color: var(--muted); }
+
+/* Stream */
+.stream { padding: 8px 16px 14px; display: flex; flex-direction: column; gap: 2px; max-height: 196px; overflow: auto; }
+.ev { display: grid; grid-template-columns: 64px 118px minmax(0, 1fr); gap: 10px; font-size: 12.5px; padding: 3px 0; color: var(--muted); align-items: baseline; }
+.ev time { font-family: var(--font-id); font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ev .svc { color: var(--text); font-weight: 600; font-size: 12px; }
+.ev .txt { color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.ev .txt b { color: var(--text); font-weight: 600; }
+.ev.new { animation: flash 1200ms ease-out; border-radius: 4px; }
+
+/* Right panel */
+.tabs { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--line); }
+.tab { border: 0; background: transparent; padding: 8px 10px 10px; font-weight: 600; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--signal); }
+.count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--signal); color: var(--signal-ink); font-size: 11px; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums; }
+.count.zero { background: var(--line-strong); color: var(--muted); }
+.right-body { padding: 14px 16px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--panel); }
+.card.focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.card h4 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.3; text-wrap: balance; }
+.card p { margin: 0; color: var(--muted); font-size: 13px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.who { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.who b { color: var(--text); font-weight: 600; }
+.glyph { width: 18px; height: 18px; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 700; flex: none; border: 1.5px solid var(--text); color: var(--text); }
+.glyph.agent { border-radius: 50%; }
+.glyph.person { border-radius: 4px; border-color: var(--signal); color: var(--signal); }
+.verdict { font-weight: 700; font-size: 12.5px; }
+.review { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.review:first-child { border-top: 0; padding-top: 0; }
+.review q { color: var(--text); font-size: 13px; quotes: none; }
+.review .meta { font-size: 12px; color: var(--faint); display: flex; gap: 10px; flex-wrap: wrap; }
+.kv { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 6px 10px; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.cites { display: flex; gap: 6px; flex-wrap: wrap; }
+.cite-chip { border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 7px; font-family: var(--font-id); font-size: 11.5px; color: var(--muted); background: transparent; }
+.cite-chip:hover { color: var(--text); border-color: var(--neutral); }
+.cite-chip.stale { border-style: dashed; color: var(--text); }
+pre.diff { margin: 0; padding: 10px 12px; background: var(--raised); border-radius: var(--r-control); font: 12px/1.55 var(--font-id); overflow-x: auto; color: var(--muted); }
+pre.diff .a { color: var(--text); }
+pre.diff .d { color: var(--faint); text-decoration: line-through; }
+.checks { display: flex; gap: 5px; align-items: center; }
+.chk { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid var(--neutral); }
+.chk.pass { background: var(--neutral); }
+.chk.fail { background: transparent; border-color: var(--text); position: relative; }
+.chk.fail::after { content: ""; position: absolute; inset: 4px -2px; border-top: 1.5px solid var(--text); transform: rotate(45deg); }
+.chk.pend { border-style: dotted; }
+.status { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); color: var(--muted); }
+.status.ready { background: var(--signal); border-color: var(--signal); color: var(--signal-ink); }
+.status.accepted { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+.status.outdated { border-style: dashed; color: var(--text); }
+.picks { display: flex; gap: 6px; flex-wrap: wrap; }
+.pick { display: inline-flex; gap: 6px; align-items: center; padding: 3px 8px; border-radius: 6px; background: var(--raised); font-size: 12px; }
+.pick .id { color: var(--muted); }
+.note { font-size: 12.5px; color: var(--text); padding: 8px 10px; border-left: 2px solid var(--signal); background: var(--signal-soft); border-radius: 0 6px 6px 0; }
+.fail-line { font-size: 12.5px; color: var(--text); }
+.fail-line b { font-family: var(--font-id); font-weight: 500; }
+.empty { text-align: left; padding: 6px 2px; }
+.empty h4 { margin: 0 0 4px; font-size: 14px; }
+.empty p { margin: 0; color: var(--muted); font-size: 13px; }
+.versions { display: grid; gap: 8px; }
+.ver { padding: 10px 12px; border-radius: var(--r-control); background: var(--raised); font-size: 13px; }
+.ver.next { border: 1px dashed var(--signal); background: transparent; }
+.ver small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+
+/* Toast + modal */
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--raised); border: 1px solid var(--line-strong); color: var(--text); padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); z-index: 30; max-width: min(560px, calc(100vw - 32px)); }
+.scrim { position: fixed; inset: 0; background: rgba(4, 7, 12, 0.6); display: grid; place-items: center; z-index: 40; padding: 16px; }
+.modal { width: min(760px, 100%); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; overflow: hidden; }
+.modal-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--raised); }
+.modal-bar .url { font-family: var(--font-id); font-size: 12px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.harbor { padding: 26px 28px 30px; background: #F2F4F7; color: #111A27; font-family: var(--font-ui); }
+.harbor h5 { margin: 0 0 14px; font-size: 22px; letter-spacing: -0.01em; }
+.harbor ul { margin: 0 0 16px; padding-left: 18px; }
+.harbor li { margin: 3px 0; }
+.harbor button { background: #111A27; color: #fff; border: 0; border-radius: 7px; padding: 8px 14px; font-weight: 600; }
+.harbor .hs { margin: 12px 0 8px; font-size: 13.5px; }
+.harbor pre { margin: 0; background: #fff; border: 1px solid #D6DCE6; border-radius: 7px; padding: 10px 12px; font: 12px/1.5 var(--font-id); color: #111A27; overflow-x: auto; }
+.harbor .cap { font-size: 12px; color: #5A6578; margin-top: 10px; }
+
+@media (max-width: 1180px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .map-panel { order: 1; }
+  .right { order: 2; }
+  .rail { order: 3; }
+}
+@media (max-width: 560px) {
+  .ev { grid-template-columns: 56px minmax(0, 1fr); }
+  .ev .svc { grid-column: 2; }
+  .ev .txt { grid-column: 2; }
+  .kv { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M4 19c4-6 20-6 24 0" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M6 23c4-4 16-4 20 0" fill="none" stroke="var(--signal)" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M9 15c3-5 11-5 14 0" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round" opacity="0.55"/>
+      </svg>
+      Nest
+    </div>
+    <nav class="crumbs" aria-label="Location">
+      <span>Harbor</span><span class="sep">/</span><strong>Viewer-safe CSV export</strong>
+    </nav>
+    <div class="top-right">
+      <span class="chip head" id="headChip">Accepted <b id="headVer">checkpoint 3</b></span>
+      <span class="chip" id="peopleChip"><b id="peopleCount">2</b> people, <b id="agentCount">6</b> agents</span>
+      <span class="chip sim" title="Every participant, check result and number on this page is simulated to show the product.">Prototype with simulated data</span>
+      <button class="theme-btn" id="themeBtn" type="button">Theme</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="panel rail" aria-label="Context">
+      <div class="panel-head"><h2>Context</h2><span class="aside">versioned like code</span></div>
+      <div class="rail-body">
+        <input class="search" id="ctxSearch" type="search" placeholder="Search 1,284 sources" aria-label="Search context" autocomplete="off">
+        <div class="store">
+          <span>Stored for this project</span><b>2.1 GB</b>
+          <span>In Kestrel's current pack</span><b id="packSize">212k tokens</b>
+          <span>Citations tracked</span><b id="citeCount">0</b>
+        </div>
+        <div id="ctxGroups"></div>
+      </div>
+    </aside>
+
+    <section class="panel map-panel" aria-label="Work map">
+      <div class="panel-head">
+        <h2>Work map</h2>
+        <div class="map-tools">
+          <button class="btn small" id="replayBtn" type="button">Replay from start</button>
+          <button class="btn small" id="scaleBtn" type="button" aria-pressed="false">Scale view</button>
+          <button class="btn small primary" id="nextBtn" type="button">Next step</button>
+        </div>
+      </div>
+      <div class="stepper" id="stepper" aria-label="Demo steps"></div>
+      <div class="tasks" id="tasks" aria-label="Tasks"></div>
+      <div class="map-wrap" id="mapWrap">
+        <svg id="map" role="img" aria-label="Contributions by capability lane"></svg>
+        <canvas id="scale" hidden aria-label="Simulated work map at scale"></canvas>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+      <div class="legend" id="legend">
+        <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--text)" stroke-width="1.5"/></svg>Agent contribution</span>
+        <span><svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="var(--text)" stroke-width="1.5"/></svg>Person's contribution</span>
+        <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--neutral)"/></svg>Approved</span>
+        <span><svg viewBox="0 0 14 14"><defs><pattern id="lh" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="3" class="hatch-line"/></pattern></defs><circle cx="7" cy="7" r="5.5" fill="url(#lh)" stroke="var(--text)" stroke-dasharray="2 1.5"/></svg>Relied on old context</span>
+        <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--ink)"/></svg>Accepted</span>
+        <span><svg viewBox="0 0 14 14"><path d="M1 10 C5 2, 9 2, 13 10" fill="none" stroke="var(--signal)" stroke-width="2.4"/></svg>Selected outcome</span>
+      </div>
+      <div class="panel-head" style="padding-top:4px"><h2>Activity</h2><span class="aside">Cloudflare service doing the work</span></div>
+      <div class="stream" id="stream" aria-live="polite"></div>
+    </section>
+
+    <aside class="panel right" aria-label="Decisions">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tab-inbox" aria-selected="true" aria-controls="rightBody">Needs you <span class="count" id="inboxCount">0</span></button>
+        <button class="tab" role="tab" id="tab-outcomes" aria-selected="false" aria-controls="rightBody">Outcomes <span class="count zero" id="outCount">0</span></button>
+        <button class="tab" role="tab" id="tab-inspect" aria-selected="false" aria-controls="rightBody">Inspector</button>
+      </div>
+      <div class="right-body" id="rightBody" role="tabpanel"></div>
+    </aside>
+  </main>
+</div>
+<div class="toast" id="toast" hidden></div>
+<div class="scrim" id="scrim" hidden></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let instant = false;
+  let busy = false;
+  const wait = (ms) => (instant || reduceMotion) ? Promise.resolve() : new Promise((r) => setTimeout(r, ms));
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ---------- Fixed scenario data (simulated) ---------- */
+  const LANES = [
+    { id: "csv", name: "CSV encoding" },
+    { id: "direct", name: "Direct export", group: true },
+    { id: "background", name: "Background export", group: true },
+    { id: "ui", name: "Viewer interface" },
+    { id: "tests", name: "Contract tests" },
+    { id: "policy", name: "Policy repair" },
+  ];
+  const P = {
+    you: { name: "You", kind: "person", detail: "Owner", ini: "Y" },
+    rae: { name: "Rae", kind: "person", detail: "Teammate", ini: "R" },
+    wren: { name: "Wren", kind: "agent", detail: "gpt-6-sol", ini: "W" },
+    kestrel: { name: "Kestrel", kind: "agent", detail: "claude-opus-5-5", ini: "K" },
+    heron: { name: "Heron", kind: "agent", detail: "claude-sonnet-5-5", ini: "H" },
+    shrike: { name: "Shrike", kind: "agent", detail: "gpt-6-astra", ini: "S", track: "41 of 44 approvals held" },
+    owl: { name: "Owl", kind: "agent", detail: "claude-opus-5-5", ini: "O", track: "37 of 39 approvals held" },
+    triage: { name: "Triage", kind: "agent", detail: "Workers AI", ini: "T" },
+    plover: { name: "Plover", kind: "agent", detail: "claude-sonnet-5-5", ini: "P" },
+  };
+  const CTX_BASE = [
+    { id: "req/export-columns", group: "Requirements", title: "Export columns", owner: "You", v: 1,
+      versions: { 1: "Exports contain id, title, status and internal_notes.",
+                  2: "Exports are customer-facing: id, title and status only. internal_notes stays private." } },
+    { id: "req/csv-format", group: "Requirements", title: "CSV format", owner: "You", v: 1,
+      versions: { 1: "RFC 4180. Quote commas, quotes and line breaks. CRLF between rows." } },
+    { id: "req/export-latency", group: "Requirements", title: "Export latency", owner: "Rae", v: 1,
+      versions: { 1: "The export request responds within 2 s at p95 for 50,000 rows." } },
+    { id: "req/viewer-scope", group: "Requirements", title: "Viewer scope", owner: "You", v: 1,
+      versions: { 1: "A viewer can export only the issues they are allowed to see." } },
+    { id: "dec/0004", group: "Decisions", title: "Job lifecycle", owner: "Rae", v: 1,
+      versions: { 1: "Export jobs move queued, running, ready. The file exists before a job reports ready." } },
+    { id: "ev/load-profile", group: "Evidence", title: "Tenant load profile", owner: "Imported", v: 1,
+      versions: { 1: "Largest tenant has 48,200 issues. Median tenant has 1,900." } },
+  ];
+  const CHECKS = ["export-columns", "csv-format", "viewer-scope", "job-flow", "export-latency"];
+  const CONTRIB = {
+    e41c: { title: "RFC 4180 CSV encoder", lane: "csv", by: "wren", task: "t-direct", slot: 0, requires: [],
+      cites: [["req/csv-format", 1], ["req/export-columns", 1]], files: "src/csv.ts +38",
+      diff: ["+export function encodeCsv(rows, columns) {", "+  const cell = (v) => /[\",\\r\\n]/.test(v)", "+    ? `\"${v.replaceAll('\"', '\"\"')}\"` : v;", "+  return rows.map(r => columns.map(c => cell(String(r[c] ?? '')))", "+    .join(',')).join('\\r\\n');"] },
+    "3fd8": { title: "Export button and job status", lane: "ui", by: "heron", task: "t-interface", slot: 1, requires: [],
+      cites: [["req/viewer-scope", 1], ["dec/0004", 1]], files: "public/app.js +61",
+      diff: ["+button.onclick = async () => {", "+  const job = await post('/api/export');", "+  watch(job.id, (s) => status.textContent = label(s));", "+};"] },
+    "9b02": { title: "Direct export endpoint", lane: "direct", by: "wren", task: "t-direct", slot: 2, requires: ["e41c"], alt: "Export strategy",
+      cites: [["req/export-columns", 1], ["req/viewer-scope", 1]], files: "src/export.ts +44",
+      diff: ["+app.post('/api/export', async (req, res) => {", "+  const rows = await visibleIssues(req.viewer);", "+  res.type('text/csv').send(encodeCsv(rows, COLUMNS));", "+});"] },
+    "51aa": { title: "Background export job", lane: "background", by: "kestrel", task: "t-background", slot: 3, requires: ["e41c"], alt: "Export strategy",
+      cites: [["req/export-columns", 1], ["req/export-latency", 1], ["dec/0004", 1], ["ev/load-profile", 1]], files: "src/export.ts +72  src/jobs.ts +40",
+      diff: ["+const COLUMNS = ['id', 'title', 'status', 'internal_notes'];", "+app.post('/api/export', (req, res) => {", "+  const job = jobs.enqueue({ viewer: req.viewer });", "+  res.status(202).json({ id: job.id, state: 'queued' });", "+});"] },
+    c0e7: { title: "Viewer-scope contract tests", lane: "tests", by: "heron", task: "t-interface", slot: 4, requires: ["3fd8"],
+      cites: [["req/viewer-scope", 1], ["req/export-columns", 1]], files: "tests/scope.test.ts +55",
+      diff: ["+test('bob cannot export alice\\'s issues', async () => {", "+  const csv = await exportAs('demo-bob');", "+  expect(ids(csv)).toEqual(['H-4', 'H-5']);", "+});"] },
+    h22: { title: "Job status wording", lane: "ui", by: "you", task: "you", slot: 5, requires: ["3fd8"],
+      cites: [["dec/0004", 1]], files: "public/app.js +6 -3",
+      diff: ["-  queued: 'Waiting', running: 'Working',", "+  queued: 'Preparing', running: 'Ready',"] },
+    h23: { title: "Status waits for the file", lane: "ui", by: "you", task: "you", slot: 6, requires: ["3fd8"], supersedes: "h22",
+      cites: [["dec/0004", 1]], files: "public/app.js +7 -3",
+      diff: ["-  queued: 'Waiting', running: 'Working',", "+  queued: 'Preparing', running: 'Preparing',", "+  ready: 'Ready to download',"] },
+    r5c3: { title: "Drop internal_notes from exports", lane: "policy", by: "wren", task: "t-repair", slot: 8, requires: ["51aa", "e41c"],
+      cites: [["req/export-columns", 2]], files: "src/export.ts +1 -1",
+      diff: ["-const COLUMNS = ['id', 'title', 'status', 'internal_notes'];", "+const COLUMNS = ['id', 'title', 'status'];"] },
+  };
+  const SLOTS = 9;
+
+  /* ---------- State ---------- */
+  let S;
+  function fresh() {
+    return {
+      clock: 14 * 3600 + 2 * 60 + 5,
+      step: 0,
+      head: 3,
+      context: CTX_BASE.map((c) => ({ ...c, versions: { ...c.versions } })),
+      rejected: [],
+      contribs: [],          // { id, status }
+      reviews: [],           // { target, by, verdict, text, conf }
+      candidates: [],        // { id, name, picks, checks, status, note, base }
+      inbox: [],             // { id, kind, target, resolved }
+      tasks: [
+        { id: "t-direct", title: "Direct approach", by: "wren", state: "running" },
+        { id: "t-background", title: "Background approach", by: "kestrel", state: "running" },
+        { id: "t-interface", title: "Interface and tests", by: "heron", state: "running" },
+      ],
+      events: [],
+      selected: null,        // { type: 'contrib'|'ctx'|'cand', id }
+      selCand: null,
+      tab: "inbox",
+      hoverCtx: null,
+      requirementChanged: false,
+      accepted: [],
+      agents: 6, people: 2,
+    };
+  }
+
+  const ctxById = (id) => S.context.find((c) => c.id === id) || S.rejected.find((c) => c.id === id);
+  const contrib = (id) => S.contribs.find((c) => c.id === id);
+  const reviewsOf = (id) => S.reviews.filter((r) => r.target === id);
+  const cand = (id) => S.candidates.find((c) => c.id === id);
+  const pendingInbox = () => S.inbox.filter((i) => !i.resolved);
+
+  function stamp() {
+    const s = S.clock; const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    return [h, m, x].map((n) => String(n).padStart(2, "0")).join(":");
+  }
+  function log(svc, html, secs = 2) {
+    S.clock += secs;
+    S.events.unshift({ t: stamp(), svc, html, fresh: !instant });
+    renderStream();
+  }
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 3600);
+  }
+  function citesStale(id) {
+    const def = CONTRIB[id];
+    return def.cites.some(([cid, v]) => { const c = ctxById(cid); return c && c.v > v; });
+  }
+  function citationTotal() {
+    return S.contribs.reduce((n, c) => n + CONTRIB[c.id].cites.length, 0) + S.reviews.filter((r) => r.cite).length;
+  }
+
+  /* ---------- Scenario actions ---------- */
+  async function push(id, extra = "") {
+    const d = CONTRIB[id];
+    S.contribs.push({ id, status: "proposed", born: !instant });
+    const ws = d.by === "you" ? "your fork" : `nest-ws-${(id.charCodeAt(0) % 16).toString(16)}${d.slot}/${d.task}-e${d.task === "t-repair" ? 2 : 1}`;
+    log("Artifacts", `<b>${P[d.by].name}</b> pushed <span class="id">${id}</span> ${esc(d.title)} to <span class="id">${ws}</span>${extra}`, 3);
+    renderAll();
+    await wait(260);
+    log("Queues", `Ingest verified <span class="id">${id}</span>: one parent, authored on checkpoint ${S.head}${d.requires.length ? " + " + d.requires.map((r) => `<span class="id">${r}</span>`).join(" + ") : ""}`, 1);
+    log("D1", `Recorded ${d.cites.length} citations for <span class="id">${id}</span>`, 0);
+    renderAll();
+    await wait(380);
+  }
+  async function review(target, by, verdict, text, conf, opts = {}) {
+    S.reviews.push({ target, by, verdict, text, conf, cite: opts.cite || null });
+    const svc = by === "triage" ? "Workers AI" : (P[by].kind === "person" ? "Nest" : "AI Gateway");
+    const verb = { approve: "approved", changes: "requested changes on", block: "blocked", route: "routed" }[verdict];
+    log(svc, `<b>${P[by].name}</b>${P[by].kind === "agent" && by !== "triage" ? ` (${P[by].detail})` : ""} ${verb} <span class="id">${target}</span>`, 2);
+    settle(target);
+    renderAll();
+    await wait(300);
+  }
+  function settle(id) {
+    const c = contrib(id); if (!c || c.status === "accepted" || c.status === "superseded") return;
+    const rs = reviewsOf(id).filter((r) => r.verdict !== "route");
+    const human = rs.filter((r) => P[r.by].kind === "person");
+    const last = human.length ? human[human.length - 1] : null;
+    if (last) { c.status = last.verdict === "approve" ? "approved" : last.verdict === "block" ? "blocked" : "changes"; return; }
+    if (rs.some((r) => r.verdict === "block")) { c.status = "changes"; return; }
+    if (rs.some((r) => r.verdict === "changes")) { c.status = "changes"; return; }
+    if (rs.filter((r) => r.verdict === "approve").length >= 2) c.status = "approved";
+  }
+  async function compose(id, name, picks, results, note, extra = {}) {
+    const c = { id, name, picks, checks: Object.fromEntries(CHECKS.map((k) => [k, "pend"])), detail: {}, status: "Composing", note, base: S.head, ...extra };
+    S.candidates.unshift(c);
+    log("Workflows", `Composer planned <span class="id">${id}</span> ${esc(name)}: ${picks.map((p) => `<span class="id">${p}</span>`).join(" + ")}`, 2);
+    renderAll(); await wait(320);
+    log("Sandbox", `Cherry-picked ${picks.length} contributions onto checkpoint ${S.head} with real git, no conflicts`, 3);
+    c.status = "Checking"; renderAll(); await wait(380);
+    for (const k of CHECKS) {
+      const r = results[k] || "pass";
+      c.checks[k] = r === "pass" ? "pass" : "fail";
+      if (r !== "pass") c.detail[k] = r;
+    }
+    const failed = CHECKS.filter((k) => c.checks[k] === "fail");
+    log("Sandbox", `Trusted checks on <span class="id">${id}</span>: ${CHECKS.length - failed.length} of ${CHECKS.length} passed${failed.length ? `; <b>${failed.join(", ")}</b> failed` : ""}`, 6);
+    c.status = failed.length ? "Failing checks" : (picks.some((p) => ["changes", "blocked"].includes(contrib(p)?.status)) ? "Waiting on review" : "Ready");
+    log("Workers", `Preview ready for <span class="id">${id}</span>`, 2);
+    if (!S.selCand || c.status === "Ready") S.selCand = id;
+    renderAll(); await wait(300);
+    return c;
+  }
+  function addInbox(item) { if (!S.inbox.some((i) => i.id === item.id)) S.inbox.push({ ...item, resolved: false }); renderAll(); }
+
+  /* Step 1: agents publish */
+  async function step1() {
+    S.step = 1; renderAll();
+    log("Agents SDK", "<b>Wren</b>, <b>Kestrel</b> and <b>Heron</b> claimed tasks; each got a fresh Artifacts fork of checkpoint 3 and a context pack", 1);
+    log("R2", "Context packs compiled: 198k, 212k and 176k tokens with 46, 51 and 39 cited sources", 1);
+    await wait(400);
+    await push("e41c");
+    await push("3fd8");
+    await push("9b02");
+    await push("51aa", ", authored on top of Wren's encoder");
+    S.tasks.find((t) => t.id === "t-direct").state = "done";
+    await push("c0e7");
+    S.tasks.find((t) => t.id === "t-background").state = "done";
+    S.tasks.find((t) => t.id === "t-interface").state = "done";
+    await push("h22");
+    renderAll();
+  }
+  /* Step 2: reviews route */
+  async function step2() {
+    S.step = 2; renderAll();
+    for (const id of ["e41c", "3fd8", "51aa", "c0e7"]) await review(id, "triage", "route", "Routine change. Two reviewers from different model families.", 0.9);
+    await review("e41c", "shrike", "approve", "Quotes commas, quotes and line breaks; CRLF rows. Property test covers 10,000 random rows.", 0.93);
+    await review("e41c", "owl", "approve", "Matches req/csv-format v1 line by line. No allocation per cell beyond the join.", 0.9);
+    await review("3fd8", "shrike", "approve", "Polls job state and stops on ready or failed. Labels come from one map.", 0.88);
+    await review("3fd8", "owl", "approve", "Button is disabled while a job runs, so double exports cannot start.", 0.86);
+    await review("51aa", "owl", "approve", "Request returns 202 in under 50 ms; the encoder runs in the job. Fits ev/load-profile.", 0.91);
+    await review("51aa", "shrike", "approve", "Job states follow dec/0004. Viewer scope is applied before encoding.", 0.89);
+    await review("c0e7", "shrike", "approve", "Covers both demo viewers and the empty case.", 0.9);
+    await review("c0e7", "owl", "approve", "Asserts exact ids, not counts. Good.", 0.87);
+    await review("9b02", "triage", "route", "Touches a latency requirement owned by Rae. Two deep reviewers.", 0.71);
+    await review("9b02", "shrike", "approve", "Simple and correct for small tenants. One request, no job state.", 0.82);
+    await review("9b02", "owl", "block", "Encodes inside the request. At 50,000 rows p95 is 3.4 s, over the 2 s in req/export-latency v1.", 0.9, { cite: "req/export-latency" });
+    addInbox({ id: "esc-9b02", kind: "disagree", target: "9b02" });
+    log("Durable Objects", "Reviewers disagree on <span class=\"id\">9b02</span>. Routed to you", 1);
+    await review("h22", "triage", "route", "Your change. Same review as anyone else's.", 0.9);
+    await review("h22", "owl", "changes", "Shows Ready while the job is still running. dec/0004 says the file exists before a job reports ready.", 0.94, { cite: "dec/0004" });
+    addInbox({ id: "esc-h22", kind: "yours", target: "h22" });
+    log("Durable Objects", "Owl requested changes on your <span class=\"id\">h22</span>. Routed to you", 1);
+    renderAll();
+  }
+  /* Step 3: outcomes compose */
+  async function step3() {
+    S.step = 3; renderAll();
+    await compose("cand-7a10", "Direct outcome", ["e41c", "9b02", "3fd8", "c0e7"], { "export-latency": "3.4 s p95 at 50,000 rows; limit 2 s" }, null);
+    await compose("cand-b3e2", "Background outcome", ["e41c", "51aa", "3fd8", "c0e7", "h22"], {}, "Keeps the CSV encoder from Wren's direct approach.");
+    S.selCand = "cand-b3e2";
+    renderAll();
+  }
+  /* Human decisions */
+  async function resolveDisagree(choice) {
+    const item = S.inbox.find((i) => i.id === "esc-9b02"); if (!item || item.resolved) return;
+    item.resolved = true;
+    if (choice === "block") {
+      await review("9b02", "you", "block", "Agree with Owl. Large tenants need the job path; direct export misses the latency requirement.", 1, { cite: "req/export-latency" });
+      const a = cand("cand-7a10"); if (a) a.status = "Blocked by review";
+      toast("Recorded your review: blocked 9b02. The reason will reach every future agent.");
+    } else {
+      await review("9b02", "you", "approve", "Approved for small tenants. The latency check still decides the outcome.", 1);
+      toast("Recorded your review: approved 9b02. Its outcome still fails the latency check.");
+    }
+    renderAll();
+  }
+  async function resolveYours(choice) {
+    const item = S.inbox.find((i) => i.id === "esc-h22"); if (!item || item.resolved) return;
+    item.resolved = true;
+    if (choice === "fix") {
+      contrib("h22").status = "superseded";
+      await push("h23", ", replacing h22");
+      await review("h23", "owl", "approve", "Ready now appears only after the file exists. Matches dec/0004.", 0.95, { cite: "dec/0004" });
+      await review("h23", "shrike", "approve", "Copy change only. No behaviour change beyond labels.", 0.9);
+      cand("cand-b3e2").status = "Superseded";
+      await compose("cand-c91d", "Background outcome", ["e41c", "51aa", "3fd8", "c0e7", "h23"], {}, "Keeps the CSV encoder from Wren's direct approach.");
+      toast("Pushed h23. Owl and Shrike approved it, and the background outcome is ready.");
+    } else {
+      await review("h22", "you", "approve", "Keeping the wording; Ready means the job finished, and the download link appears separately.", 1);
+      const b = cand("cand-b3e2"); if (b) b.status = "Ready";
+      toast("Recorded your override with its reason. Owl's track record will reflect how it holds up.");
+    }
+    renderAll();
+  }
+  /* Step 4: requirement changes */
+  async function step4() {
+    if (pendingInbox().some((i) => i.id === "esc-9b02")) await resolveDisagree("block");
+    if (pendingInbox().some((i) => i.id === "esc-h22")) await resolveYours("fix");
+    S.step = 4; renderAll();
+    const req = ctxById("req/export-columns");
+    S.selected = { type: "ctx", id: req.id }; S.tab = "inspect"; renderAll();
+    await wait(500);
+    log("Artifacts", "<b>You</b> committed <span class=\"id\">req/export-columns</span> version 2 to the context repo", 2);
+    await wait(300);
+    const hit = S.contribs.filter((c) => c.status !== "superseded" && CONTRIB[c.id].cites.some(([cid, v]) => cid === req.id && v === req.v)).map((c) => c.id);
+    await ripple(req.id, hit);
+    req.v = 2; S.requirementChanged = true;
+    const live = S.candidates.filter((c) => ["Ready", "Waiting on review", "Accepted"].includes(c.status));
+    log("D1", `Blast radius of version 2: <b>${hit.length} contributions</b>, <b>${live.length} outcome${live.length === 1 ? "" : "s"}</b> and <b>1 running task</b> cited version 1`, 1);
+    for (const c of S.candidates) if (c.status === "Ready" || c.status === "Waiting on review") c.status = "Outdated";
+    renderAll(); await wait(600);
+    const target = S.candidates.find((c) => c.status === "Outdated") || S.candidates.find((c) => c.status === "Accepted");
+    log("Sandbox", `Rechecked <span class="id">${target.id}</span> under version 2: <b>export-columns</b> failed, internal_notes present in all 48,200 rows`, 5);
+    target.recheck = "export-columns failed under version 2: internal_notes is still exported.";
+    log("Durable Objects", "Opened a conflict and a repair task. Assigned to <b>Kestrel</b>", 1);
+    S.tasks.push({ id: "t-repair", title: "Repair export columns", by: "kestrel", state: "running", attempt: 1 });
+    renderAll(); await wait(700);
+    log("Workflows", "<b>Kestrel</b> read version 2 and the selected outcome tree. Tool boundary 6 recorded", 3);
+    await wait(400);
+    const t = S.tasks.find((x) => x.id === "t-repair");
+    t.state = "paused";
+    log("Durable Objects", "Paused <span class=\"id\">t-repair</span> at boundary 6. Attempt 1 fenced and its write token revoked", 2);
+    renderAll(); await wait(700);
+    t.by = "wren"; t.state = "running"; t.attempt = 2; t.handoff = true;
+    log("Agents SDK", "Resumed <span class=\"id\">t-repair</span> as attempt 2 on <b>Wren</b> (gpt-6-sol) from the portable checkpoint: workspace, pack, 2 pending steps", 2);
+    renderAll(); await wait(600);
+    await push("r5c3", ", attempt 2 of the same task");
+    await review("r5c3", "triage", "route", "Policy change. Two reviewers, and you at acceptance.", 0.9);
+    await review("r5c3", "owl", "approve", "Columns now match req/export-columns v2 exactly. Header test updated by the trusted check.", 0.95, { cite: "req/export-columns" });
+    await review("r5c3", "shrike", "approve", "One-line change. Nothing else reads internal_notes.", 0.92);
+    t.state = "done"; renderAll();
+    const basePicks = target.status === "Accepted" ? [] : target.picks;
+    await compose("cand-e04f", "Background outcome, repaired", [...basePicks, "r5c3"], {}, "Keeps the CSV encoder from Wren's direct approach. Built on the repair from a second model.", { repaired: true });
+    S.selCand = "cand-e04f";
+    addInbox({ id: "esc-accept", kind: "accept", target: "cand-e04f" });
+    S.tab = "inbox"; S.selected = null;
+    renderAll();
+  }
+  async function ripple(ctxId, nodes) {
+    const svg = $("#map"); const layer = svg.querySelector("#fx");
+    if (!layer || reduceMotion || instant) return;
+    const spineY = spinePos(ctxId);
+    const mark = svg.querySelector(`[data-spine="${CSS.escape(ctxId)}"]`);
+    if (mark) mark.classList.add("on");
+    const anims = [];
+    nodes.forEach((id, i) => {
+      const p = nodePos(id); if (!p) return;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", curve(G.spineX, spineY, p.x, p.y));
+      path.setAttribute("class", "cite-flow");
+      layer.appendChild(path);
+      const len = path.getTotalLength();
+      path.style.strokeDasharray = `${len}`; path.style.strokeDashoffset = `${len}`;
+      const a = path.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 820, delay: i * 140, easing: "cubic-bezier(.3,.6,.2,1)", fill: "forwards" });
+      anims.push(a.finished.then(() => {
+        const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        ring.setAttribute("cx", p.x); ring.setAttribute("cy", p.y); ring.setAttribute("r", 11);
+        ring.setAttribute("class", "cite-flow"); ring.setAttribute("fill", "none");
+        ring.style.transformBox = "fill-box"; ring.style.transformOrigin = "center";
+        layer.appendChild(ring);
+        return ring.animate([{ transform: "scale(1)", opacity: 0.9 }, { transform: "scale(2.7)", opacity: 0 }], { duration: 700, easing: "ease-out", fill: "forwards" }).finished;
+      }));
+    });
+    await Promise.all(anims);
+    await wait(250);
+  }
+  /* Step 5: accept */
+  async function accept(id) {
+    const c = cand(id); if (!c || c.status !== "Ready") return;
+    const item = S.inbox.find((i) => i.id === "esc-accept"); if (item) item.resolved = true;
+    if (c.repaired) S.step = 5;
+    log("Durable Objects", `Compare-and-swap on the project head: checkpoint ${S.head} to ${S.head + 1}, context and policy digests matched`, 2);
+    log("R2", "Acceptance receipt stored with the validation evidence and your review", 1);
+    log("Artifacts", "Wrote reviews and provenance to <span class=\"id\">refs/notes/nest/reviews</span> on every accepted commit", 1);
+    S.head += 1; c.status = "Accepted";
+    for (const p of c.picks) { const x = contrib(p); if (x) x.status = "accepted"; }
+    for (const o of S.candidates) if (o.id !== id && !["Accepted"].includes(o.status)) o.status = o.status === "Failing checks" || o.status === "Blocked by review" ? o.status : "Superseded";
+    const stale = c.picks.filter((p) => citesStale(p));
+    if (stale.length) log("Nest", `Your acceptance records that you reviewed ${stale.map((p) => `<span class="id">${p}</span>`).join(", ")} against version 2. Their history still says they were written for version 1`, 0);
+    if (!S.rejected.some((r) => r.id === "rej/0001")) {
+      const why = reviewsOf("9b02").find((r) => r.by === "you")?.text || "Fails the latency requirement for large tenants.";
+      S.rejected.push({ id: "rej/0001", group: "Rejected approaches", title: "Direct export", owner: "You", v: 1, fresh: true,
+        versions: { 1: `Direct export was not chosen. ${why}` } });
+      log("Artifacts", "Wrote <span class=\"id\">rej/0001</span> Direct export to the context repo, with your reason", 1);
+    }
+    $("#headChip").classList.remove("flash"); void $("#headChip").offsetWidth; $("#headChip").classList.add("flash");
+    renderAll();
+    toast(`Accepted checkpoint ${S.head}. The head moved by compare-and-swap.`);
+    if (!c.repaired || S.tasks.some((t) => t.id === "t-xlsx")) return;
+    await wait(900);
+    S.tasks.push({ id: "t-xlsx", title: "Add XLSX export", by: "plover", state: "running" });
+    S.agents += 1;
+    log("Agents SDK", "<b>Plover</b> claimed <span class=\"id\">t-xlsx</span>. Its pack includes <span class=\"id\">rej/0001</span>, so it starts from the background job", 2);
+    renderAll();
+  }
+
+  /* ---------- Geometry ---------- */
+  const G = { w: 900, h: 440, labelW: 146, top: 34, laneH: 62, spineX: 150, left: 196, right: 40 };
+  function layout() {
+    const wrap = $("#mapWrap");
+    G.w = Math.max(640, wrap.clientWidth);
+    G.h = G.top + LANES.length * G.laneH + 22;
+    G.spineX = G.labelW + 10;
+    G.left = G.labelW + 52;
+  }
+  const laneY = (lane) => G.top + LANES.findIndex((l) => l.id === lane) * G.laneH + G.laneH / 2;
+  const slotX = (slot) => G.left + slot * ((G.w - G.left - G.right) / (SLOTS - 1));
+  function nodePos(id) { const d = CONTRIB[id]; return d ? { x: slotX(d.slot), y: laneY(d.lane) } : null; }
+  function spinePos(ctxId) {
+    const all = [...S.context, ...S.rejected];
+    const i = Math.max(0, all.findIndex((c) => c.id === ctxId));
+    const span = LANES.length * G.laneH - 30;
+    return G.top + 15 + (span * i) / Math.max(1, all.length - 1);
+  }
+  function curve(x0, y0, x1, y1) {
+    const dx = Math.max(30, (x1 - x0) / 2);
+    return `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`;
+  }
+
+  /* ---------- Rendering ---------- */
+  function renderMap() {
+    layout();
+    const svg = $("#map");
+    svg.setAttribute("width", G.w); svg.setAttribute("height", G.h); svg.setAttribute("viewBox", `0 0 ${G.w} ${G.h}`);
+    const out = [];
+    out.push(`<defs><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" class="hatch-line"/></pattern></defs>`);
+    LANES.forEach((l, i) => {
+      const y = G.top + i * G.laneH;
+      out.push(`<rect class="lane-bg ${i % 2 ? "alt" : ""}" x="0" y="${y}" width="${G.w}" height="${G.laneH}"/>`);
+      out.push(`<text class="lane-name" x="16" y="${y + G.laneH / 2 + 4}">${esc(l.name)}</text>`);
+    });
+    const g0 = LANES.findIndex((l) => l.group), g1 = g0 + 1;
+    const by0 = G.top + g0 * G.laneH + 12, by1 = G.top + (g1 + 1) * G.laneH - 12;
+    out.push(`<path class="bracket" d="M8,${by0} L4,${by0} L4,${by1} L8,${by1}"/>`);
+    out.push(`<text class="lane-sub" x="16" y="${G.top + g0 * G.laneH + G.laneH / 2 + 19}">choose one</text>`);
+    out.push(`<text class="lane-sub" x="16" y="${G.top + g1 * G.laneH + G.laneH / 2 + 19}">choose one</text>`);
+    out.push(`<text class="axis" x="${G.left}" y="20">Earlier</text><text class="axis" x="${G.w - G.right}" y="20" text-anchor="end">Later</text>`);
+    out.push(`<line class="spine" x1="${G.spineX}" y1="${G.top + 6}" x2="${G.spineX}" y2="${G.top + LANES.length * G.laneH - 6}"/>`);
+    // selected thread + other threads
+    const live = S.candidates.filter((c) => !["Superseded"].includes(c.status));
+    for (const c of live) {
+      const pts = c.picks.map(nodePos).filter(Boolean).sort((a, b) => a.x - b.x);
+      if (pts.length < 2) continue;
+      let d = `M${pts[0].x},${pts[0].y}`;
+      for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; const dx = (b.x - a.x) / 2; d += ` C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; }
+      out.push(`<path class="thread ${c.id === S.selCand ? "sel" : ""}" d="${d}"/>`);
+    }
+    // dependencies
+    const sel = S.selected && S.selected.type === "contrib" ? S.selected.id : null;
+    for (const c of S.contribs) {
+      const d = CONTRIB[c.id];
+      for (const r of d.requires) {
+        if (!contrib(r)) continue;
+        const a = nodePos(r), b = nodePos(c.id);
+        out.push(`<path class="dep ${sel && (sel === c.id || sel === r) ? "hl" : ""}" d="${curve(a.x, a.y, b.x, b.y)}"/>`);
+      }
+    }
+    // citation hover lines
+    const hov = S.hoverCtx;
+    if (hov) {
+      const sy = spinePos(hov);
+      for (const c of S.contribs) {
+        if (CONTRIB[c.id].cites.some(([cid]) => cid === hov)) { const p = nodePos(c.id); out.push(`<path class="cite" d="${curve(G.spineX, sy, p.x, p.y)}"/>`); }
+      }
+    }
+    // spine marks
+    for (const c of [...S.context, ...S.rejected]) {
+      const y = spinePos(c.id);
+      out.push(`<rect class="spine-mark ${hov === c.id ? "on" : ""}" data-spine="${esc(c.id)}" x="${G.spineX - 4}" y="${y - 4}" width="8" height="8" transform="rotate(45 ${G.spineX} ${y})"><title>${esc(c.title)}</title></rect>`);
+    }
+    out.push(`<g id="fx"></g>`);
+    // nodes
+    const selPicks = new Set((cand(S.selCand)?.picks) || []);
+    const asks = new Set(pendingInbox().map((i) => i.target));
+    for (const c of S.contribs) {
+      const d = CONTRIB[c.id]; const p = nodePos(c.id); const who = P[d.by];
+      let st = c.status;
+      if (S.requirementChanged && st !== "superseded" && st !== "accepted" && citesStale(c.id)) st = "stale";
+      const shape = who.kind === "person"
+        ? `<rect class="body" x="-10.5" y="-10.5" width="21" height="21" rx="4.5"/>`
+        : `<circle class="body" r="11.5"/>`;
+      const marks = st === "blocked" || st === "changes"
+        ? `<line class="mark" x1="-15" y1="15" x2="15" y2="-15" opacity="0.7"/>` : "";
+      const ticks = reviewsOf(c.id).filter((r) => r.verdict !== "route").slice(-4).map((r, i, arr) => {
+        const x = (i - (arr.length - 1) / 2) * 9; const y = 22; const person = P[r.by].kind === "person";
+        if (person) return `<rect class="tick ${r.verdict === "approve" ? "hm" : "hm-ch"}" x="${x - 3}" y="${y - 3}" width="6" height="6" rx="1"/>`;
+        if (r.verdict === "approve") return `<circle class="tick ok" cx="${x}" cy="${y}" r="3"/>`;
+        if (r.verdict === "changes") return `<circle class="tick ch" cx="${x}" cy="${y}" r="2.8"/>`;
+        return `<path class="tick bl" d="M${x - 3},${y - 3} L${x + 3},${y + 3} M${x + 3},${y - 3} L${x - 3},${y + 3}"/>`;
+      }).join("");
+      const ring = selPicks.has(c.id) ? `<circle class="ring" r="${who.kind === "person" ? 17 : 17}"/>` : "";
+      const ask = asks.has(c.id) ? `<circle class="ask" r="22"/>` : "";
+      const label = `${d.title}, by ${who.name}. ${{ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", stale: "Relied on old context", accepted: "Accepted", superseded: "Superseded" }[st]}`;
+      out.push(`<g class="node st-${st} ${sel === c.id ? "sel" : ""}" data-id="${c.id}" transform="translate(${p.x},${p.y})" tabindex="0" role="button" aria-label="${esc(label)}">${ask}${ring}${shape}${marks}<text class="ini">${who.ini}</text><text class="nid" y="-18">${c.id}</text>${ticks}</g>`);
+    }
+    svg.innerHTML = out.join("");
+    // born animation
+    if (!reduceMotion) for (const c of S.contribs) if (c.born) {
+      const el = svg.querySelector(`.node[data-id="${c.id}"] .body`);
+      if (el) el.animate([{ transform: "scale(0.4)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1.2)" });
+      c.born = false;
+    }
+  }
+
+  function renderRail() {
+    const q = $("#ctxSearch").value.trim().toLowerCase();
+    const groups = ["Requirements", "Decisions", "Rejected approaches", "Evidence"];
+    const all = [...S.context, ...S.rejected];
+    const html = groups.map((g) => {
+      const items = all.filter((c) => c.group === g && (!q || (c.title + " " + c.id + " " + c.versions[c.v]).toLowerCase().includes(q)));
+      let body = items.map((c) => {
+        const citedBy = S.contribs.filter((x) => CONTRIB[x.id].cites.some(([cid]) => cid === c.id)).length;
+        const on = S.selected?.type === "ctx" && S.selected.id === c.id;
+        return `<button class="ctx ${on ? "on" : ""} ${c.fresh ? "fresh" : ""}" data-ctx="${esc(c.id)}" type="button"><span class="t">${esc(c.title)}</span><span class="v ${c.v > 1 ? "new" : ""}">v${c.v}</span><span class="m"><span class="id">${esc(c.id)}</span><span>${citedBy ? `cited by ${citedBy}` : "not cited yet"}</span></span></button>`;
+      }).join("");
+      if (!items.length && g === "Rejected approaches" && !q) body = `<p class="empty-note">When you choose between approaches, the reason is kept here for every future agent.</p>`;
+      if (!items.length && (q || g !== "Rejected approaches")) return q ? "" : `<div class="group"><h3>${g}</h3>${body}</div>`;
+      return `<div class="group"><h3>${g}</h3>${body}</div>`;
+    }).join("");
+    $("#ctxGroups").innerHTML = html || `<p class="empty-note">No sources match “${esc(q)}”. Try a requirement name or an id such as dec/0004.</p>`;
+    for (const c of S.rejected) c.fresh = false;
+    $("#citeCount").textContent = citationTotal().toLocaleString();
+  }
+
+  function renderStepper() {
+    const names = ["Agents publish", "Reviews route", "Outcomes compose", "Requirement changes", "Accept"];
+    $("#stepper").innerHTML = names.map((n, i) => {
+      const k = i + 1; const cls = S.step >= k ? "done" : (S.step + 1 === k ? "now" : "");
+      return `<span class="step ${cls}"><span class="n">${k}</span>${n}</span>`;
+    }).join("");
+    const next = $("#nextBtn");
+    const labels = { 0: "Start: agents publish", 1: "Next: reviews", 2: "Next: compose outcomes", 3: "Next: change a requirement", 4: "Accept the repaired outcome", 5: "Done" };
+    next.textContent = labels[S.step];
+    next.disabled = busy || S.step >= 5 || (S.step === 4 && cand("cand-e04f")?.status !== "Ready");
+    $("#replayBtn").disabled = busy;
+  }
+
+  function renderTasks() {
+    $("#tasks").innerHTML = S.tasks.map((t) => {
+      const who = P[t.by]; const st = { running: "Running", paused: "Paused at boundary", done: "Done" }[t.state];
+      return `<span class="task ${t.state}"><span class="dot"></span><b>${esc(t.title)}</b><span>${who.name}, ${esc(who.detail)}${t.attempt ? `, attempt ${t.attempt}` : ""}</span><span class="state">${st}</span></span>`;
+    }).join("");
+  }
+
+  function renderStream() {
+    $("#stream").innerHTML = S.events.slice(0, 60).map((e) => `<div class="ev ${e.fresh ? "new" : ""}"><time>${e.t}</time><span class="svc">${e.svc}</span><span class="txt">${e.html}</span></div>`).join("");
+    for (const e of S.events) e.fresh = false;
+  }
+
+  function who(by) {
+    const p = P[by];
+    return `<span class="who"><span class="glyph ${p.kind}">${p.ini}</span><b>${p.name}</b>${p.kind === "agent" ? `<span>${esc(p.detail)}</span>` : `<span>${esc(p.detail)}</span>`}</span>`;
+  }
+  function verdictText(v) { return { approve: "Approved", changes: "Requested changes", block: "Blocked", route: "Routed" }[v]; }
+  function reviewHtml(r) {
+    return `<div class="review"><div class="row">${who(r.by)}<span class="verdict">${verdictText(r.verdict)}</span></div><q>${esc(r.text)}</q><div class="meta">${r.by !== "triage" && P[r.by].kind === "agent" ? `<span>Confidence ${r.conf.toFixed(2)}</span>` : ""}${P[r.by].track ? `<span>${P[r.by].track}</span>` : ""}${r.cite ? `<span>Cites <span class="id">${esc(r.cite)}</span></span>` : ""}</div></div>`;
+  }
+  function checksHtml(c) {
+    return `<div class="checks" aria-label="Checks">${CHECKS.map((k) => `<span class="chk ${c.checks[k]}" title="${k}: ${c.checks[k] === "pass" ? "passed" : c.checks[k] === "fail" ? "failed" : "pending"}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${CHECKS.filter((k) => c.checks[k] === "pass").length} of ${CHECKS.length} checks</span></div>`;
+  }
+  function statusClass(s) { return s === "Ready" ? "ready" : s === "Accepted" ? "accepted" : s === "Outdated" ? "outdated" : ""; }
+
+  function inboxHtml() {
+    const items = pendingInbox();
+    if (!items.length) {
+      return `<div class="empty"><h4>Nothing needs you right now</h4><p>Agents review every push. You are asked when reviewers disagree, when your own change gets feedback, when protected context changes, and when an outcome is ready to accept.</p></div>`;
+    }
+    return items.map((i) => {
+      if (i.kind === "disagree") {
+        const rs = reviewsOf("9b02").filter((r) => r.verdict !== "route");
+        return `<div class="card focus"><h4>Reviewers disagree on Direct export endpoint</h4><p>Two models from different families reached different verdicts on <span class="id">9b02</span> by Wren. Your review settles it and is kept with the work.</p>${rs.map(reviewHtml).join("")}<div class="row"><button class="btn small primary" data-act="disagree-block" type="button">Agree with the block</button><button class="btn small" data-act="disagree-approve" type="button">Approve anyway</button><button class="btn small" data-open="9b02" type="button">Open contribution</button></div></div>`;
+      }
+      if (i.kind === "yours") {
+        const r = reviewsOf("h22").find((x) => x.by === "owl");
+        return `<div class="card focus"><h4>Owl requested changes on your change</h4><p>Your contributions get the same review as an agent's. <span class="id">h22</span> Job status wording.</p>${reviewHtml(r)}<pre class="diff">${CONTRIB.h22.diff.map((l) => `<span class="${l[0] === "+" ? "a" : "d"}">${esc(l)}</span>`).join("\n")}</pre><div class="row"><button class="btn small primary" data-act="yours-fix" type="button">Push the fix</button><button class="btn small" data-act="yours-keep" type="button">Keep it, with a reason</button></div></div>`;
+      }
+      const c = cand(i.target);
+      const stale = c.picks.filter((p) => citesStale(p));
+      return `<div class="card focus"><h4>${esc(c.name)} is ready to accept</h4><p>All ${CHECKS.length} trusted checks pass under export columns version 2. Every contribution has two agent approvals. Accepting moves the project head from checkpoint ${S.head} to ${S.head + 1}.</p>${stale.length ? `<div class="note">${stale.length} of these contributions were written against version 1. Accepting records that you reviewed them against version 2.</div>` : ""}${checksHtml(c)}<div class="picks">${c.picks.map((p) => `<span class="pick"><span class="id">${p}</span>${esc(CONTRIB[p].title)}</span>`).join("")}</div><div class="row"><button class="btn small primary" data-accept="${c.id}" type="button">Accept checkpoint ${S.head + 1}</button><button class="btn small" data-preview="${c.id}" type="button">Open preview</button></div></div>`;
+    }).join("");
+  }
+  function outcomesHtml() {
+    const list = S.candidates.filter((c) => c.status !== "Superseded");
+    if (!list.length) return `<div class="empty"><h4>No outcomes yet</h4><p>When contributions arrive, Nest assembles every compatible combination, merges it with real git and runs the trusted checks on the whole result.</p></div>`;
+    const order = { Ready: 0, Accepted: 1, Checking: 2, Composing: 2, "Waiting on review": 3, Outdated: 4, "Failing checks": 5, "Blocked by review": 6 };
+    return list.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9)).map((c) => {
+      const failed = CHECKS.filter((k) => c.checks[k] === "fail");
+      return `<div class="card ${c.id === S.selCand ? "focus" : ""}" data-cand="${c.id}"><div class="row" style="justify-content:space-between"><h4>${esc(c.name)}</h4><span class="status ${statusClass(c.status)}">${esc(c.status)}</span></div><div class="row"><span class="id" style="color:var(--muted)">${c.id}</span><span style="font-size:12.5px;color:var(--muted)">on checkpoint ${c.base}</span></div>${checksHtml(c)}${failed.map((k) => `<div class="fail-line"><b>${k}</b> ${esc(c.detail[k])}</div>`).join("")}${c.recheck ? `<div class="fail-line">${esc(c.recheck)}</div>` : ""}<div class="picks">${c.picks.map((p) => `<span class="pick"><span class="id">${p}</span>${esc(CONTRIB[p].title)}</span>`).join("")}</div>${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}<div class="row"><button class="btn small" data-select-cand="${c.id}" type="button">Show on map</button><button class="btn small" data-preview="${c.id}" type="button">Open preview</button>${c.status === "Ready" ? `<button class="btn small primary" data-accept="${c.id}" type="button">Accept checkpoint ${S.head + 1}</button>` : ""}</div></div>`;
+    }).join("");
+  }
+  function inspectHtml() {
+    const s = S.selected;
+    if (!s) return `<div class="empty"><h4>Select anything on the map</h4><p>A contribution shows its diff, the context it cites, every review from people and agents, and where it came from. A context item shows its versions and what relies on it.</p></div>`;
+    if (s.type === "contrib") {
+      const d = CONTRIB[s.id]; const c = contrib(s.id); const rs = reviewsOf(s.id).filter((r) => r.verdict !== "route");
+      const triage = reviewsOf(s.id).find((r) => r.verdict === "route");
+      const t = S.tasks.find((x) => x.id === d.task);
+      return `<div class="card"><div class="row">${who(d.by)}</div><h4>${esc(d.title)}</h4><dl class="kv"><dt>Contribution</dt><dd class="id">${s.id}</dd><dt>Capability</dt><dd>${esc(LANES.find((l) => l.id === d.lane).name)}</dd><dt>Depends on</dt><dd>${d.requires.length ? d.requires.map((r) => `<span class="id">${r}</span> ${esc(CONTRIB[r].title)}`).join("<br>") : "Nothing beyond the checkpoint"}</dd>${d.alt ? `<dt>Alternative to</dt><dd>${esc(d.alt)}: pick one per outcome</dd>` : ""}${d.supersedes ? `<dt>Replaces</dt><dd class="id">${d.supersedes}</dd>` : ""}<dt>Files</dt><dd class="id">${esc(d.files)}</dd><dt>Provenance</dt><dd>${d.by === "you" ? "Pushed by you from your own fork" : `Task <span class="id">${d.task}</span>${t?.handoff && d.task === "t-repair" ? ", attempt 2 after a handoff from Kestrel" : ", attempt 1"}; pack and prompt digest in <span class="id">refs/notes/nest/provenance</span>`}</dd></dl><div><div style="font-size:12px;color:var(--muted);margin-bottom:6px">Cites</div><div class="cites">${d.cites.map(([cid, v]) => { const cur = ctxById(cid); const stale = cur && cur.v > v; return `<button class="cite-chip ${stale ? "stale" : ""}" data-ctx="${esc(cid)}" type="button">${esc(cid)} v${v}${stale ? `, now v${cur.v}` : ""}</button>`; }).join("")}</div></div><pre class="diff">${d.diff.map((l) => `<span class="${l[0] === "+" ? "a" : "d"}">${esc(l)}</span>`).join("\n")}</pre></div><div class="card"><div class="row" style="justify-content:space-between"><h4>Reviews</h4><span style="font-size:12.5px;color:var(--muted)">${c.status === "accepted" ? "Accepted" : ""}</span></div>${triage ? `<p>${esc(triage.text)}</p>` : ""}${rs.length ? rs.map(reviewHtml).join("") : `<p>Waiting for reviewers.</p>`}</div>`;
+    }
+    if (s.type === "ctx") {
+      const c = ctxById(s.id);
+      const uses = S.contribs.filter((x) => CONTRIB[x.id].cites.some(([cid]) => cid === c.id));
+      const canPropose = c.id === "req/export-columns" && c.v === 1 && S.step >= 3 && S.step < 4 && !busy;
+      const vers = Object.keys(c.versions).map(Number).filter((v) => v <= c.v);
+      const kind = { Requirements: "Requirement", Decisions: "Decision", Evidence: "Evidence", "Rejected approaches": "Rejected approach" }[c.group];
+      return `<div class="card"><div class="row" style="justify-content:space-between"><h4>${esc(c.title)}</h4><span class="status">${esc(kind)}</span></div><dl class="kv"><dt>Item</dt><dd class="id">${esc(c.id)}</dd><dt>Owner</dt><dd>${esc(c.owner)}${c.owner === "You" ? ", changes need your review" : ""}</dd><dt>Relied on by</dt><dd>${uses.length ? uses.map((x) => `<span class="id">${x.id}</span> ${esc(CONTRIB[x.id].title)}`).join("<br>") : "Nothing yet"}</dd></dl><div class="versions">${vers.slice().reverse().map((v) => `<div class="ver"><small>Version ${v}${v === c.v ? ", current" : ""}</small>${esc(c.versions[v])}</div>`).join("")}${canPropose ? `<div class="ver next"><small>Proposed version 2</small>${esc(c.versions[2])}</div>` : ""}</div>${canPropose ? `<div class="row"><button class="btn small primary" data-act="change-req" type="button">Accept version 2</button><span style="font-size:12.5px;color:var(--muted)">Shows its blast radius on the map</span></div>` : ""}</div>`;
+    }
+    return "";
+  }
+  function renderRight() {
+    const tabs = { inbox: "#tab-inbox", outcomes: "#tab-outcomes", inspect: "#tab-inspect" };
+    for (const [k, sel] of Object.entries(tabs)) $(sel).setAttribute("aria-selected", String(S.tab === k));
+    const n = pendingInbox().length; const ic = $("#inboxCount"); ic.textContent = n; ic.classList.toggle("zero", n === 0);
+    const live = S.candidates.filter((c) => c.status !== "Superseded").length; const oc = $("#outCount"); oc.textContent = live; oc.classList.toggle("zero", live === 0);
+    $("#rightBody").innerHTML = S.tab === "inbox" ? inboxHtml() : S.tab === "outcomes" ? outcomesHtml() : inspectHtml();
+  }
+  function renderHeader() {
+    $("#headVer").textContent = `checkpoint ${S.head}`;
+    $("#agentCount").textContent = S.agents; $("#peopleCount").textContent = S.people;
+    const t = S.tasks.find((x) => x.state === "running" && x.id !== "t-xlsx");
+    $("#packSize").textContent = t ? (t.by === "wren" ? "198k tokens" : "212k tokens") : "212k tokens";
+  }
+  function renderAll() {
+    renderHeader(); renderStepper(); renderTasks(); renderRail(); renderRight();
+    if (!scaleOn) renderMap();
+  }
+
+  /* ---------- Scale view (simulated layout) ---------- */
+  let scaleOn = false;
+  function drawScale() {
+    const cv = $("#scale"); const wrap = $("#mapWrap");
+    const w = Math.max(640, wrap.clientWidth), h = 440, dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + "px"; cv.style.height = h + "px";
+    const x = cv.getContext("2d"); x.scale(dpr, dpr);
+    const cs = getComputedStyle(document.documentElement);
+    const col = (n) => cs.getPropertyValue(n).trim();
+    x.fillStyle = col("--panel"); x.fillRect(0, 0, w, h);
+    let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const lanes = 40, top = 42, laneH = (h - top - 16) / lanes, left = 16, right = 16;
+    x.font = `600 12.5px ${col("--font-ui")}`; x.fillStyle = col("--text");
+    x.fillText("2,400 contributions from 1,180 agents and 6 people across 40 capabilities", left, 22);
+    x.font = `400 12px ${col("--font-ui")}`; x.fillStyle = col("--muted");
+    x.fillText("Simulated to test the layout at scale. Not a measurement.", left, 37);
+    for (let i = 0; i < lanes; i++) {
+      if (i % 2) { x.fillStyle = col("--raised"); x.fillRect(0, top + i * laneH, w, laneH); }
+    }
+    const sel = new Set(); for (let i = 0; i < 40; i++) sel.add(Math.floor(rnd() * 2400));
+    for (let i = 0; i < 2400; i++) {
+      const lane = Math.floor(Math.pow(rnd(), 1.4) * lanes);
+      const t = Math.min(1, Math.max(0, (i / 2400) * 0.92 + rnd() * 0.08));
+      const px = left + t * (w - left - right), py = top + lane * laneH + laneH / 2 + (rnd() - 0.5) * laneH * 0.5;
+      const r = rnd(); x.beginPath(); x.arc(px, py, 2.1, 0, Math.PI * 2);
+      if (sel.has(i)) { x.fillStyle = col("--signal"); x.fill(); }
+      else if (r < 0.62) { x.fillStyle = col("--neutral"); x.globalAlpha = 0.75; x.fill(); x.globalAlpha = 1; }
+      else if (r < 0.9) { x.strokeStyle = col("--muted"); x.lineWidth = 1; x.stroke(); }
+      else { x.fillStyle = col("--ink"); x.fill(); }
+    }
+  }
+  function toggleScale() {
+    scaleOn = !scaleOn;
+    $("#scaleBtn").setAttribute("aria-pressed", String(scaleOn));
+    $("#scaleBtn").textContent = scaleOn ? "Back to objective" : "Scale view";
+    $("#map").hidden = scaleOn; $("#scale").hidden = !scaleOn; $("#legend").hidden = scaleOn;
+    if (scaleOn) drawScale(); else renderMap();
+  }
+
+  /* ---------- Preview modal ---------- */
+  function openPreview(id) {
+    const c = cand(id); if (!c) return;
+    const v2 = c.picks.includes("r5c3") || (c.status === "Accepted" && S.requirementChanged && c.repaired);
+    const direct = c.picks.includes("9b02");
+    const header = v2 ? "id,title,status" : "id,title,status,internal_notes";
+    const rows = v2 ? ["H-4,Add status filter,open", "H-5,Improve keyboard navigation,done"] : ["H-4,Add status filter,open,\"Waiting on design, see thread\"", "H-5,Improve keyboard navigation,done,Shipped in 2.3"];
+    const scrim = $("#scrim");
+    scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Preview of ${esc(c.name)}"><div class="modal-bar"><span class="url">nest-preview/${c.id}</span><button class="btn small" id="closePrev" type="button">Close preview</button></div><div class="harbor"><h5>Your issues</h5><ul><li>H-4 Add status filter, open</li><li>H-5 Improve keyboard navigation, done</li></ul><button id="hxBtn" type="button">Export CSV</button><div class="hs" id="hxStatus" aria-live="polite"></div><pre id="hxCsv" hidden>${esc([header, ...rows].join("\r\n"))}</pre><div class="cap">Simulated preview of ${esc(c.name)}. In Nest each outcome is deployed and opened as a live Worker preview.</div></div></div>`;
+    scrim.hidden = false;
+    const close = () => { scrim.hidden = true; scrim.innerHTML = ""; };
+    $("#closePrev").onclick = close; scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    document.addEventListener("keydown", function onKey(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } });
+    $("#closePrev").focus();
+    $("#hxBtn").onclick = async () => {
+      const st = $("#hxStatus");
+      if (direct) { st.textContent = "Downloading…"; await new Promise((r) => setTimeout(r, reduceMotion ? 0 : 900)); st.textContent = "Downloaded after 3.4 s for the largest tenant."; }
+      else { st.textContent = "Preparing"; await new Promise((r) => setTimeout(r, reduceMotion ? 0 : 1100)); st.textContent = "Ready to download"; }
+      $("#hxCsv").hidden = false;
+    };
+  }
+
+  /* ---------- Flow control ---------- */
+  async function run(fn) { if (busy) return; busy = true; renderStepper(); try { await fn(); } finally { busy = false; renderAll(); } }
+  async function next() {
+    if (S.step === 0) return run(step1);
+    if (S.step === 1) return run(async () => { await step2(); S.tab = "inbox"; });
+    if (S.step === 2) return run(async () => { await step3(); });
+    if (S.step === 3) return run(step4);
+    if (S.step === 4) return run(() => accept("cand-e04f"));
+  }
+  async function boot(animated) {
+    S = fresh();
+    if (!animated) {
+      instant = true;
+      await step1(); await step2(); await step3();
+      for (const e of S.events) e.fresh = false;
+      instant = false;
+      S.tab = "inbox"; renderAll();
+    } else {
+      renderAll();
+      await run(async () => { await step1(); await step2(); await step3(); S.tab = "inbox"; });
+    }
+  }
+
+  /* ---------- Events ---------- */
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-id],[data-ctx],[data-act],[data-accept],[data-preview],[data-open],[data-select-cand],[role=tab]");
+    if (!t) return;
+    if (t.matches(".tab")) { S.tab = t.id.replace("tab-", ""); renderRight(); return; }
+    if (t.dataset.id) { S.selected = { type: "contrib", id: t.dataset.id }; S.tab = "inspect"; renderAll(); return; }
+    if (t.dataset.ctx) { S.selected = { type: "ctx", id: t.dataset.ctx }; S.tab = "inspect"; renderAll(); return; }
+    if (t.dataset.open) { S.selected = { type: "contrib", id: t.dataset.open }; S.tab = "inspect"; renderAll(); return; }
+    if (t.dataset.selectCand) { S.selCand = t.dataset.selectCand; if (scaleOn) toggleScale(); renderAll(); return; }
+    if (t.dataset.preview) { openPreview(t.dataset.preview); return; }
+    if (t.dataset.accept) { run(() => accept(t.dataset.accept)); return; }
+    const act = t.dataset.act;
+    if (act === "disagree-block") run(() => resolveDisagree("block"));
+    if (act === "disagree-approve") run(() => resolveDisagree("approve"));
+    if (act === "yours-fix") run(() => resolveYours("fix"));
+    if (act === "yours-keep") run(() => resolveYours("keep"));
+    if (act === "change-req") run(step4);
+  });
+  document.addEventListener("keydown", (e) => {
+    const n = e.target.closest && e.target.closest(".node");
+    if (n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); S.selected = { type: "contrib", id: n.dataset.id }; S.tab = "inspect"; renderAll(); }
+  });
+  const tip = $("#tip");
+  $("#map").addEventListener("pointermove", (e) => {
+    const n = e.target.closest(".node");
+    if (!n) { tip.hidden = true; return; }
+    const d = CONTRIB[n.dataset.id]; const c = contrib(n.dataset.id);
+    const rs = reviewsOf(n.dataset.id).filter((r) => r.verdict !== "route");
+    tip.innerHTML = `<b>${esc(d.title)}</b><span>${P[d.by].name}${P[d.by].kind === "agent" ? `, ${esc(P[d.by].detail)}` : ""}. ${rs.length} review${rs.length === 1 ? "" : "s"}.</span>`;
+    const box = $("#mapWrap").getBoundingClientRect();
+    tip.style.left = Math.min(box.width - 270, e.clientX - box.left + 14 + $("#mapWrap").scrollLeft) + "px";
+    tip.style.top = (e.clientY - box.top + 14) + "px";
+    tip.hidden = false;
+  });
+  $("#map").addEventListener("pointerleave", () => { tip.hidden = true; });
+  $("#ctxGroups").addEventListener("pointerover", (e) => { const b = e.target.closest("[data-ctx]"); const id = b ? b.dataset.ctx : null; if (id !== S.hoverCtx) { S.hoverCtx = id; if (!scaleOn) renderMap(); } });
+  $("#ctxGroups").addEventListener("pointerleave", () => { S.hoverCtx = null; if (!scaleOn) renderMap(); });
+  $("#ctxGroups").addEventListener("focusin", (e) => { const b = e.target.closest("[data-ctx]"); S.hoverCtx = b ? b.dataset.ctx : null; if (!scaleOn) renderMap(); });
+  $("#ctxSearch").addEventListener("input", renderRail);
+  $("#nextBtn").addEventListener("click", next);
+  $("#replayBtn").addEventListener("click", () => { if (!busy) { if (scaleOn) toggleScale(); boot(true); } });
+  $("#scaleBtn").addEventListener("click", toggleScale);
+  $("#themeBtn").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    if (scaleOn) drawScale(); else renderMap();
+  });
+  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (scaleOn) drawScale(); else renderMap(); }, 120); });
+
+  boot(false);
+})();
+</script>
