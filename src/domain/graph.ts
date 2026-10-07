@@ -193,6 +193,10 @@ export function planFrontier(
       }).map((n) => n.id),
     );
     for (const id of [...replaced, ...dead]) excluded.add(id);
+    // A pending replacement that could not become a choice (one side is in an explicit group) wins when
+    // both are in play, so the combination is not lost to an incompatibility.
+    for (const n of pool)
+      if (n.supersedes && !excluded.has(n.id) && !(implicit.get(n.id) && implicit.get(n.id) === implicit.get(n.supersedes))) excluded.add(n.supersedes);
     // Memoized depth-first search. Shared ancestors (diamonds) are normal: every commit requires its
     // whole authoring closure. Only an id still on the current path is a cycle.
     const memo = new Map<string, boolean>();

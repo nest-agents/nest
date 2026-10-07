@@ -22,7 +22,7 @@ Nest-Cites: req/csv-format@v1
 
 ## A real run, on Cloudflare
 
-These are from one generation of the live deployment on 2026-10-07. Every number comes from the deployment's own ledger.
+These are from one generation of the live deployment on 2026-10-07, up to checkpoint 4. Every number comes from the deployment's own ledger.
 
 - **The plan.** Three agents from two model families, given three tasks: two competing export designs, and a shared Export button. Wren ran on Codex with gpt-6-luna. Kestrel and Heron ran on nest-agent with Claude Haiku 5.5.
 - **Contributions and reviews.** The agents published 10 contributions. Workers AI triaged each, and two reviewers from different families reviewed it.
@@ -30,13 +30,15 @@ These are from one generation of the live deployment on 2026-10-07. Every number
 - **Outcomes.** Nest assembled three whole outcomes with real git: Wren's direct export, Kestrel's background-job export, and **Heron's button on Wren's API**, which no single agent wrote.
   - All three passed the 7 trusted checks.
   - All three passed a real browser clicking Export CSV.
-- **Acceptance.** The person accepted the mixed outcome. The losing approach became a note carrying the person's reason.
+- **Acceptance.** The person accepted the mixed outcome. Kestrel's job approach was recorded as a rejected-approach note, which every later context pack carries. When a person gives a reason at acceptance, the note carries it too.
 - **A requirement change.** The person then changed the export columns requirement to v2 (internal notes must never be exported). Its blast radius was 4 contributions and 3 outcomes.
   - The accepted checkpoint now failed two checks, so Nest opened one repair, starting from the checkpoint's own tree.
   - Kestrel fixed it in under a minute, and the person accepted checkpoint 4.
   - Six contributions that could no longer apply were retired, each with a stated reason.
 - **A handover across families.** Kestrel was paused mid-task with uncommitted work. Workers AI summarized its activity into handover notes, and Wren continued on the other model family. All 19 lines of Kestrel's uncommitted change are in Wren's commit.
-- **Cost.** Model spend for the whole run was **$1.85** across 183 calls.
+- **Agents review people.** The person claimed a task, pushed a commit from a laptop with a one-hour token for that fork only, and the push registered 9 s later. Owl (Claude) and Shrike (OpenAI) reviewed and approved it within 26 s, after Workers AI triage.
+- **A conflict, reconciled.** Heron's status filter and Wren's sort control both rewrote the same render function, so real git could not combine them. The person asked Kestrel to reconcile. Its workspace started from the filter and the sort helper already combined, with Wren's change as data. The reconciled outcome passed the browser check.
+- **Cost.** Model spend through checkpoint 4 was **$1.85** across 183 calls. The live header shows the running total, which includes the later handover, reconcile and person-review tests.
 
 ## Throughput, measured
 
@@ -46,7 +48,7 @@ These are from one generation of the live deployment on 2026-10-07. Every number
 |---|---|---|---|---|
 | 100 | 100 in 2.8 s, 25 at a time | 100 | 0 | 4.6 s / 7.4 s / 13.9 s |
 
-Setting up 100 forks and tokens took 55 s; forks run five at a time, because simultaneous forks of one repository returned errors. Registration is bounded by event delivery and Workflow start-up, not by the Durable Object.
+Setting up 100 forks and tokens took 55 s; forks run five at a time, because simultaneous forks of one repository returned errors. Registration time appears to be dominated by event delivery and Workflow start-up. The Durable Object path was not measured on its own.
 
 ## How it uses Cloudflare
 

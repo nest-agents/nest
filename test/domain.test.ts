@@ -172,6 +172,16 @@ describe("frontier", () => {
     expect(pending.every((o) => !(o.includes("sort") && o.includes("fixed")))).toBe(true);
     expect(planFrontier(g("approved"), new Set()).map((f) => f.order.join(","))).toEqual(["filter,fixed"]);
   });
+  it("keeps a pending replacement plannable when it sits in an explicit alternative group", () => {
+    const g = graph(
+      C("enc", 1),
+      C("api", 2, { requires: ["enc"] }),
+      C("api2", 3, { requires: ["enc"], supersedes: "api", alternative: "strategy", status: "proposed" }),
+    );
+    const orders = planFrontier(g, new Set()).map((f) => f.order.join(","));
+    expect(orders).toContain("enc,api2");
+    expect(orders.every((o) => !(o.includes("api,") || o.endsWith(",api")) || !o.includes("api2"))).toBe(true);
+  });
   it("marks an outcome not ready while a member awaits review", () => {
     const f = planFrontier(graph(C("a", 1), C("b", 2, { status: "proposed" })), new Set());
     expect(f[0]!.ready).toBe(false);
