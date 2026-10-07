@@ -24,8 +24,8 @@ console.log(`preparing ${COUNT} contributors in ${NAME}`);
 const t0 = Date.now();
 const contributors = [];
 let base = null;
-for (let offset = 0; offset < COUNT; offset += 100) {
-  const r = await api("/api/admin/swarm", { method: "POST", body: JSON.stringify({ name: NAME, count: Math.min(100, COUNT - offset), offset }) });
+for (let offset = 0; offset < COUNT; offset += 25) {
+  const r = await api("/api/admin/swarm", { method: "POST", body: JSON.stringify({ name: NAME, count: Math.min(25, COUNT - offset), offset }) });
   base = r.base;
   contributors.push(...r.contributors);
 }
