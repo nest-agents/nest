@@ -34,6 +34,10 @@ export class ProjectDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.schema();
+  }
+
+  private schema(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS checkpoints(version INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, commit_sha TEXT NOT NULL,
         context_digest TEXT NOT NULL, policy_digest TEXT NOT NULL, candidate TEXT, reason TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -101,6 +105,7 @@ export class ProjectDO extends DurableObject<Env> {
   /** Owner-only, for rehearsals. The next bootstrap re-reads the seed repositories. */
   async reset(): Promise<void> {
     await this.ctx.storage.deleteAll();
+    this.schema();
   }
 
   /** First checkpoint: the seed commit plus the seed context. Idempotent. */

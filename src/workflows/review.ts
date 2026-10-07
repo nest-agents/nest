@@ -21,20 +21,22 @@ export async function contributionDiff(env: Env, repo: string, parent: string, c
 }
 
 /** The diff for prompts (bounded) and whether anything was left out. */
-export async function contributionDiffInfo(env: Env, repo: string, parent: string, commit: string, paths: string[], maxChars = 60_000): Promise<{ text: string; truncated: boolean }> {
+export async function contributionDiffInfo(env: Env, repo: string, parent: string, commit: string, paths: string[], maxChars = 60_000): Promise<{ text: string; truncated: boolean; unreadable: string[] }> {
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const parts: string[] = [];
   let total = 0;
+  const unreadable: string[] = [];
   for (const path of paths) {
     const [before, after] = await Promise.all([
       artifacts.readText(repo, parent, path).catch(() => null),
       artifacts.readText(repo, commit, path).catch(() => null),
     ]);
+    if (before === null && after === null) unreadable.push(path);
     const d = unifiedDiff(path, before, after);
     total += d.length;
     parts.push(total > maxChars ? `--- ${path}: diff omitted, review budget reached\n` : d);
   }
-  return { text: parts.join("\n"), truncated: total > maxChars };
+  return { text: parts.join("\n"), truncated: total > maxChars, unreadable };
 }
 
 function routeFor(env: Env, p: Participant): { provider: "openai" | "openrouter" | "workers-ai"; model: string } {
@@ -71,7 +73,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
       const repoSections = await repositorySections(this.env, c.repo, c.commit, "Repository after this change", 60_000, nonce);
       const repoText = repoSections.map((s) => `### ${s.title}\n${s.text}`).join("\n\n");
       return {
-        nonce, injection: injectionFindings(fullDiff, [c.message, ...c.paths]), truncated: promptDiff.truncated,
+        nonce, injection: injectionFindings(fullDiff, [c.message, ...c.paths]), truncated: promptDiff.truncated, unreadable: promptDiff.unreadable,
         title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative, repoText,
         author: author ? `${author.name} (${author.kind === "agent" ? author.model : "person"})` : c.author,
         participants: state.participants,
@@ -88,6 +90,11 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
     if (input.injection.length) {
       await step.do("flag possible prompt injection", async () => {
         await objective.flagContribution(id, `Possible prompt injection in the change: ${input.injection.join("; ")}`);
+      });
+    }
+    if (input.unreadable.length) {
+      await step.do("flag unreadable files", async () => {
+        await objective.flagContribution(id, `Some changed files could not be read for review: ${input.unreadable.slice(0, 5).join(", ")}`);
       });
     }
     if (input.truncated) {

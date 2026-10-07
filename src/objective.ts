@@ -44,6 +44,10 @@ export class ObjectiveDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.schema();
+  }
+
+  private schema(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, svc TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, data TEXT);
@@ -133,7 +137,15 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("INSERT INTO meta VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", k, v);
   }
 
+  /** Random per initialization; part of workspace names and tokens so a reset invalidates both. */
+  generation(): string {
+    const g = this.meta("generation");
+    if (!g) throw new ObjectiveError("NOT_INITIALIZED");
+    return g;
+  }
+
   init(input: { id: string; title: string; criteria: string[]; project: string; policy?: ReviewPolicy }): { id: string; title: string } {
+    if (!this.meta("generation")) this.setMeta("generation", crypto.randomUUID().replaceAll("-", "").slice(0, 8));
     if (!this.meta("objective")) {
       this.setMeta("objective", input.id);
       this.setMeta("title", input.title);
@@ -528,7 +540,7 @@ export class ObjectiveDO extends DurableObject<Env> {
   async reset(): Promise<void> {
     for (const ws of this.ctx.getWebSockets()) ws.close(1012, "objective reset");
     await this.ctx.storage.deleteAll();
-    this.sql.exec("SELECT 1");
+    this.schema();
   }
 
   // ---------- snapshot ----------

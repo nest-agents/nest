@@ -410,7 +410,9 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     const headers = new Headers(request.headers);
     headers.delete("authorization");
     headers.delete("cookie");
-    headers.set("x-nest-task", await taskToken(this.env, props.objective, props.task, props.epoch));
+    const ws = props.workspace ? parseWorkspaceRepo(props.workspace) : null;
+    if (!ws) return deny("this computer has no workspace");
+    headers.set("x-nest-task", await taskToken(this.env, props.objective, ws.generation, props.task, props.epoch));
     const inner = new Request(new URL(`${url.pathname}${url.search}`, "https://nest.internal"), { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer() });
     const { default: worker } = await import("./index");
     return worker.fetch(inner, this.env, this.ctx as unknown as ExecutionContext);

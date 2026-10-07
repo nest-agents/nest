@@ -29,9 +29,22 @@ const PATTERNS: [RegExp, string][] = [
  * zero-width and other format characters removed, whitespace collapsed, lines joined so a phrase split
  * across lines still matches.
  */
+const CONFUSABLES: Record<string, string> = {
+  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ј": "j", "ѕ": "s", "ԁ": "d", "ɡ": "g", "һ": "h", "ӏ": "l", "ո": "n", "ս": "u",
+  "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "І": "I", "Ј": "J", "Ѕ": "S",
+  "α": "a", "ε": "e", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "ν": "v", "ι": "i", "κ": "k", "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+};
+
+/** A word that mixes Latin letters with Cyrillic or Greek ones is a classic way to dodge filters. */
+export function mixedScriptWords(text: string): string[] {
+  const words = text.normalize("NFKC").match(/[\p{L}\p{M}]+/gu) ?? [];
+  return [...new Set(words.filter((w) => /\p{Script=Latin}/u.test(w) && /[\p{Script=Cyrillic}\p{Script=Greek}]/u.test(w)))].slice(0, 5);
+}
+
 export function normalizeForScan(text: string): string {
   return text
     .normalize("NFKC")
+    .replace(/[\u0370-\u03FF\u0400-\u04FF\u0500-\u052F\u0261\u0570-\u058F]/g, (ch) => CONFUSABLES[ch] ?? ch)
     .replace(/[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0]/g, "")
     .replace(/\s+/g, " ");
 }
@@ -45,6 +58,10 @@ export function injectionFindings(diff: string, extra: string[] = []): string[] 
   // Comment leaders are dropped per line so a phrase split across comment lines still reads as one.
   const leader = /^\s*(?:\/\/+|#+|\/\*+|\*+\/?|<!--|-->|--|;+)\s?/;
   const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1).replace(leader, "")).join("\n");
-  const text = normalizeForScan([added, ...extra].join("\n"));
-  return PATTERNS.filter(([re]) => re.test(text)).map(([, why]) => why);
+  const raw = [added, ...extra].join("\n");
+  const text = normalizeForScan(raw);
+  const found = PATTERNS.filter(([re]) => re.test(text)).map(([, why]) => why);
+  const mixed = mixedScriptWords(raw);
+  if (mixed.length) found.push(`uses look-alike characters (${mixed.join(", ")})`);
+  return found;
 }

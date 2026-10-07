@@ -141,7 +141,7 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
   if (route === "POST /api/publish") {
     require(p, "owner", "task");
     const b = await body<{ repo: string; commit: string }>(request);
-    if (p.kind === "task" && b.repo !== workspaceRepo(p.objective, p.task, p.epoch)) throw new HttpError(403, "NOT_YOUR_WORKSPACE");
+    if (p.kind === "task" && b.repo !== workspaceRepo(p.objective, p.generation, p.task, p.epoch)) throw new HttpError(403, "NOT_YOUR_WORKSPACE");
     return json(await ingestPush(env, b.repo, b.commit));
   }
 
@@ -204,7 +204,7 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     const b = await body<{ id: string; name: string; family: string; model: string; role: "worker" | "reviewer" }>(request);
     if (!/^[a-z][a-z0-9-]{1,31}$/.test(b.id ?? "")) throw new HttpError(400, "INVALID_PARTICIPANT_ID");
     const participant = await objective.upsertParticipant({ id: b.id, kind: "agent", name: String(b.name).slice(0, 40), family: String(b.family).slice(0, 32), model: String(b.model).slice(0, 80), harness: b.role === "reviewer" ? "reviewer" : "external" });
-    return json({ participant, token: await participantToken(env, b.id), mcp: `${url.origin}/mcp` });
+    return json({ participant, token: await participantToken(env, b.id, await objective.generation()), mcp: `${url.origin}/mcp` });
   }
 
   if (route === "POST /api/compose") {

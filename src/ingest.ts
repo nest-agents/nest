@@ -16,6 +16,8 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
   if (!ws || !SHA1.test(after)) return [];
   const objective = objectiveStub(env, ws.objective);
   const project = projectStub(env);
+  const generation = await objective.generation().catch(() => null);
+  if (generation !== ws.generation) return [{ commit: after, status: "rejected", reason: "workspace belongs to an earlier generation of this objective" }];
   const attempt = await objective.attemptForRepo(repo);
   if (!attempt) return [{ commit: after, status: "rejected", reason: "repository is not a Nest task workspace" }];
 

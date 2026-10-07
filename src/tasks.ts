@@ -25,7 +25,8 @@ export async function startTask(env: Env, taskId: string, participantId: string,
   if (!head) throw new TaskError("NOT_BOOTSTRAPPED");
 
   const epoch = t.epoch + 1;
-  const repo = workspaceRepo(OBJECTIVE_ID, taskId, epoch);
+  const generation = await objective.generation();
+  const repo = workspaceRepo(OBJECTIVE_ID, generation, taskId, epoch);
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const handover = t.status === "paused" && t.repo;
   const source = handover ? t.repo! : projectRepo(env);
@@ -40,7 +41,7 @@ export async function startTask(env: Env, taskId: string, participantId: string,
     const token = await artifacts.token(repo, "write", 3600);
     using r = await env.ARTIFACTS.get(repo);
     const info = await r.info();
-    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, OBJECTIVE_ID, taskId, epoch), epoch };
+    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, OBJECTIVE_ID, generation, taskId, epoch), epoch };
   }
   const workflow = `task-${taskId}-e${epoch}`;
   await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });

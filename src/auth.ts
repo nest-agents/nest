@@ -2,7 +2,7 @@
 
 export type Principal =
   | { kind: "owner" }
-  | { kind: "task"; objective: string; task: string; epoch: number }
+  | { kind: "task"; objective: string; generation: string; task: string; epoch: number }
   | { kind: "participant"; id: string }
   | { kind: "viewer" };
 
@@ -22,14 +22,14 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 /** Task tokens are minted per attempt and only ever injected by the sandbox's Outbound entrypoint. */
-export async function taskToken(env: Env, objective: string, task: string, epoch: number): Promise<string> {
-  const body = `${objective}.${task}.${epoch}`;
+export async function taskToken(env: Env, objective: string, generation: string, task: string, epoch: number): Promise<string> {
+  const body = `${objective}.${generation}.${task}.${epoch}`;
   return `${body}.${await hmac(env.NEST_SIGNING_KEY, `task:${body}`)}`;
 }
 
-/** External agents (MCP clients) act as a registered participant with this token. */
-export async function participantToken(env: Env, id: string): Promise<string> {
-  return `p.${id}.${await hmac(env.NEST_SIGNING_KEY, `participant:${id}`)}`;
+/** External agents (MCP clients) act as a registered participant with this token, valid for one generation. */
+export async function participantToken(env: Env, id: string, generation: string): Promise<string> {
+  return `p.${id}.${generation}.${await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${generation}`)}`;
 }
 
 export async function authenticate(env: Env, request: Request): Promise<Principal | null> {
@@ -39,18 +39,20 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
   const owner = bearer || decodeURIComponent(cookie);
   if (owner && env.NEST_OWNER_TOKEN && timingSafeEqual(owner, env.NEST_OWNER_TOKEN)) return { kind: "owner" };
   if (bearer.startsWith("p.")) {
-    const [, id, sig] = bearer.split(".");
-    if (id && sig && timingSafeEqual(sig, await hmac(env.NEST_SIGNING_KEY, `participant:${id}`))) return { kind: "participant", id };
-    return null;
+    const [, id, generation, sig] = bearer.split(".");
+    if (!id || !generation || !sig || !timingSafeEqual(sig, await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${generation}`))) return null;
+    const { objectiveStub } = await import("./names");
+    const current = await objectiveStub(env).generation().catch(() => null);
+    return current === generation ? { kind: "participant", id } : null;
   }
 
   const task = request.headers.get("x-nest-task");
   if (task) {
     const parts = task.split(".");
-    if (parts.length === 4) {
-      const [objective, taskId, epochText, sig] = parts as [string, string, string, string];
-      const expected = await hmac(env.NEST_SIGNING_KEY, `task:${objective}.${taskId}.${epochText}`);
-      if (timingSafeEqual(sig, expected)) return { kind: "task", objective, task: taskId, epoch: Number(epochText) };
+    if (parts.length === 5) {
+      const [objective, generation, taskId, epochText, sig] = parts as [string, string, string, string, string];
+      const expected = await hmac(env.NEST_SIGNING_KEY, `task:${objective}.${generation}.${taskId}.${epochText}`);
+      if (timingSafeEqual(sig, expected)) return { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) };
     }
     return null;
   }
