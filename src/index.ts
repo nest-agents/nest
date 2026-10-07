@@ -238,10 +238,21 @@ async function bootstrap(env: Env) {
   return { head, context: items.map((i) => ({ id: i.id, version: i.version })) };
 }
 
-/** Live preview of a candidate: requests go to the candidate's own runner container. */
+const PREVIEW_CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE",
+  "access-control-allow-headers": "content-type, x-harbor-viewer",
+};
+
+/**
+ * Live preview of a candidate. Candidate code is untrusted, so every response carries a CSP sandbox:
+ * the page gets an opaque origin, cannot send Nest's cookies, and cannot read Nest's API. A small shim
+ * keeps the candidate's absolute paths inside its own preview.
+ */
 async function preview(request: Request, env: Env, url: URL): Promise<Response> {
   const m = /^\/preview\/([a-z0-9-]{4,64})(\/.*)?$/.exec(url.pathname);
   if (!m) return new Response("Not found", { status: 404 });
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: PREVIEW_CORS });
   const computer = env.COMPUTERS.getByName(`runner-${m[1]}`);
   const inner = new URL(m[2] ?? "/", "http://candidate");
   inner.search = url.search;
@@ -251,6 +262,16 @@ async function preview(request: Request, env: Env, url: URL): Promise<Response> 
   const res = await computer.serve(new Request(inner, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer() }));
   const out = new Headers(res.headers);
   out.delete("set-cookie");
-  out.set("content-security-policy", "default-src 'self' 'unsafe-inline'; frame-ancestors 'self'");
+  for (const [k, v] of Object.entries(PREVIEW_CORS)) out.set(k, v);
+  out.set("content-security-policy", "sandbox allow-scripts allow-forms allow-downloads allow-popups");
+  out.set("x-content-type-options", "nosniff");
+  out.set("cache-control", "no-store");
+  if ((out.get("content-type") ?? "").startsWith("text/html")) {
+    const base = `/preview/${m[1]}`;
+    const shim = `<script>(()=>{const B=${JSON.stringify(base)};const f=window.fetch;window.fetch=(i,o)=>{if(typeof i==="string"&&i.startsWith("/")&&!i.startsWith(B))i=B+i;return f(i,o)};})();</script>`;
+    const html = (await res.text()).replace(/<head[^>]*>/i, (h) => `${h}${shim}`);
+    out.delete("content-length");
+    return new Response(html, { status: res.status, headers: out });
+  }
   return new Response(res.body, { status: res.status, headers: out });
 }

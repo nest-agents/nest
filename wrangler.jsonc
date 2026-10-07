@@ -12,6 +12,7 @@
     "ACCOUNT_ID": "461aad8037e6c7bda5bac789d1393a75",
     "ARTIFACTS_NAMESPACE": "nest",
     "AI_GATEWAY_ID": "nest",
+    "AI_GATEWAY_MODE": "direct",
     "PROJECT": "harbor",
     "AGENT_MODEL_OPENAI": "gpt-6-luna",
     "AGENT_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",

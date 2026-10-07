@@ -27,6 +27,17 @@ export function estimateCost(model: string, inputTokens: number, maxOutputTokens
 
 export const gatewayBase = (env: Env) => `https://gateway.ai.cloudflare.com/v1/${env.ACCOUNT_ID}/${env.AI_GATEWAY_ID}`;
 
+/**
+ * Where a provider request really goes. Agents and reviewers always address the gateway; in "direct"
+ * mode (before the gateway exists) the same path is sent straight to the provider.
+ */
+export function providerTarget(env: Env, provider: string, rest: string): string | null {
+  if ((env.AI_GATEWAY_MODE as string) === "gateway") return `${gatewayBase(env)}/${provider}/${rest}`;
+  if (provider === "openai") return `https://api.openai.com/v1/${rest.replace(/^v1\//, "")}`;
+  if (provider === "openrouter") return `https://openrouter.ai/api/v1/${rest.replace(/^v1\//, "")}`;
+  return null;
+}
+
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 export type ChatResult = { text: string; inputTokens: number; outputTokens: number; model: string };
 
@@ -46,9 +57,8 @@ export async function chat(
   if (!(await opts.reserve(id, estimateCost(route.model, promptTokens, maxTokens)))) throw new Error("SPEND_CAP_REACHED");
 
   if (route.provider === "workers-ai") {
-    const out = (await env.AI.run(route.model as keyof AiModels, { messages, max_tokens: maxTokens } as never, {
-      gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} },
-    } as never)) as { response?: string; choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    const options = (env.AI_GATEWAY_MODE as string) === "gateway" ? { gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} } } : {};
+    const out = (await env.AI.run(route.model as keyof AiModels, { messages, max_tokens: maxTokens } as never, options as never)) as { response?: string; choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const text = out.response ?? out.choices?.[0]?.message?.content ?? "";
     const inT = out.usage?.prompt_tokens ?? promptTokens;
     const outT = out.usage?.completion_tokens ?? Math.ceil(text.length / 4);
@@ -57,7 +67,7 @@ export async function chat(
     return { text, inputTokens: inT, outputTokens: outT, model: route.model };
   }
 
-  const url = route.provider === "openai" ? `${gatewayBase(env)}/openai/chat/completions` : `${gatewayBase(env)}/openrouter/v1/chat/completions`;
+  const url = providerTarget(env, route.provider, route.provider === "openai" ? "chat/completions" : "v1/chat/completions")!;
   const key = route.provider === "openai" ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY;
   const res = await fetch(url, {
     method: "POST",

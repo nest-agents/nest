@@ -67,7 +67,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const computerName = `runner-${c.id}`;
         const computer = this.env.COMPUTERS.getByName(computerName);
         const result = await computer.compose(
-          { computer: computerName, role: "runner", objective: objectiveId },
+          { computer: computerName, role: "runner", objective: objectiveId, candidate: c.id },
           { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit },
           c.order.map((id) => ({ id, remote: remoteOf(this.env, plan.picks[id]!.repo), commit: plan.picks[id]!.commit })),
           candidateBranch(c.id),

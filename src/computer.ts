@@ -6,16 +6,25 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { objectiveStub, parseWorkspaceRepo, projectRepo } from "./names";
-import { estimateCost, priceFor } from "./models";
+import { candidateBranch, contextRepo, objectiveStub, parseWorkspaceRepo, projectRepo } from "./names";
+import { estimateCost, priceFor, providerTarget } from "./models";
+import { receivePackRefs } from "./gitproto";
 
+/**
+ * agent: runs a task attempt; pushes only main of its own workspace.
+ * runner: composes one candidate, then hosts its code; pushes only cand-<id>, and loses all git access
+ *         once candidate code is running.
+ * mirror: fast-forwards the project's main after an acceptance; never runs candidate code.
+ * context: commits accepted context versions to the context repo; never runs candidate code.
+ */
 export type ComputerProps = {
   computer: string;
-  role: "agent" | "runner";
+  role: "agent" | "runner" | "mirror" | "context";
   objective: string;
   task?: string;
   epoch?: number;
   workspace?: string;
+  candidate?: string;
 };
 
 const CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
@@ -104,6 +113,11 @@ export class Computer extends DurableObject<Env> {
     return this.exec(["bash", "-lc", script], cwd, {}, timeoutSeconds);
   }
 
+  /** "host" once candidate code may be running in this container; git access ends there. */
+  phase(): "compose" | "host" {
+    return this.ctx.storage.kv.get<"compose" | "host">("phase") ?? "compose";
+  }
+
   /** Git credentials, cached per repository inside this Durable Object, never inside the container. */
   async gitToken(repo: string, scope: "read" | "write"): Promise<string> {
     const key = `${scope}:${repo}`;
@@ -181,6 +195,7 @@ export class Computer extends DurableObject<Env> {
 
   async destroy(reason: string): Promise<void> {
     this.tokens.clear();
+    this.ctx.storage.kv.delete("phase");
     if (this.container.running) await this.container.destroy(reason);
   }
 
@@ -197,6 +212,12 @@ export class Computer extends DurableObject<Env> {
     if (!/^cand-[a-z0-9-]{4,64}$/.test(branch)) throw new Error("invalid candidate branch");
     for (const r of [base.remote, ...picks.map((p) => p.remote)]) if (!r.startsWith(host) || !/^[A-Za-z0-9._\/:-]+$/.test(r)) throw new Error(`invalid remote ${r}`);
     for (const c of [base.commit, ...picks.map((p) => p.commit)]) if (!sha.test(c)) throw new Error(`invalid commit ${c}`);
+    if (this.phase() === "host") {
+      // A container that has hosted candidate code is never trusted with git again.
+      await this.destroy("recompose in a fresh container");
+      this.setup = undefined;
+    }
+    this.ctx.storage.kv.put("phase", "compose");
     this.ctx.storage.kv.put("props", props);
     await this.start();
     await this.sh(`rm -rf ${REPO_DIR}`, "/workspace");
@@ -234,6 +255,8 @@ export class Computer extends DurableObject<Env> {
     };
     const first = await health();
     if (first.ok) return first;
+    this.ctx.storage.kv.put("phase", "host");
+    this.tokens.clear();
     await this.container.exec(["/bin/sh", "-c", `setsid node /trusted/serve.mjs ${REPO_DIR} 8080 >/workspace/serve.log 2>&1 &`], { cwd: "/workspace", env: { HOME: "/root" }, stdout: "ignore", stderr: "ignore" });
     for (let i = 0; i < 60; i++) {
       const h = await health();
@@ -284,35 +307,75 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     const pushing = m[3]!.startsWith("git-receive-pack") || url.searchParams.get("service") === "git-receive-pack";
     const ws = parseWorkspaceRepo(repo);
     const isProject = repo === projectRepo(this.env);
-    if (!isProject && !ws) return deny(`${repo} is not part of this project`);
-    if (pushing) {
-      // Agents push only to their own attempt's workspace; runners push only candidate branches of the project.
-      const ok = props.role === "agent" ? repo === props.workspace : isProject;
-      if (!ok) return deny(`push to ${repo} is not allowed from this computer`);
-    }
+    const isContext = repo === contextRepo(this.env);
     const computer = this.env.COMPUTERS.getByName(props.computer);
+
+    // Which repositories this computer may read, and the single ref it may update.
+    let readable: boolean;
+    let pushRef: { repo: string; ref: string } | null;
+    switch (props.role) {
+      case "agent":
+        readable = isProject || !!ws;
+        pushRef = props.workspace ? { repo: props.workspace, ref: "refs/heads/main" } : null;
+        break;
+      case "runner":
+        if ((await computer.phase()) === "host") return deny("this computer hosts candidate code and has no git access");
+        readable = isProject || !!ws;
+        pushRef = props.candidate ? { repo: projectRepo(this.env), ref: `refs/heads/${candidateBranch(props.candidate)}` } : null;
+        break;
+      case "mirror":
+        readable = isProject;
+        pushRef = { repo: projectRepo(this.env), ref: "refs/heads/main" };
+        break;
+      case "context":
+        readable = isContext;
+        pushRef = { repo: contextRepo(this.env), ref: "refs/heads/main" };
+        break;
+    }
+    if (!pushing && !readable) return deny(`${repo} is not readable from this computer`);
+    if (pushing && (!pushRef || pushRef.repo !== repo)) return deny(`push to ${repo} is not allowed from this computer`);
+
+    let body: ArrayBuffer | undefined;
+    if (pushing && request.method === "POST") {
+      // The receive-pack request begins with pkt-lines "<old> <new> <ref>"; every ref must be the allowed one.
+      body = await request.arrayBuffer();
+      const refs = receivePackRefs(new Uint8Array(body));
+      if (!refs.length || refs.some((r) => r !== pushRef!.ref)) return deny(`only ${pushRef!.ref} may be updated from this computer (got ${refs.join(", ") || "none"})`);
+    }
     const secret = await computer.gitToken(repo, pushing ? "write" : "read");
     const headers = new Headers(request.headers);
     headers.delete("authorization");
     headers.set("authorization", `Bearer ${secret}`);
-    return fetch(new Request(request, { headers }));
+    return fetch(new Request(url, { method: request.method, headers, body: body ?? (["GET", "HEAD"].includes(request.method) ? undefined : request.body) }));
   }
 
   private async model(request: Request, url: URL, props: ComputerProps): Promise<Response> {
-    const provider = url.pathname.split("/")[4] ?? "";
-    const key = provider === "openai" ? this.env.OPENAI_API_KEY : provider === "openrouter" ? this.env.OPENROUTER_API_KEY : provider === "workers-ai" ? "" : null;
-    if (key === null) return deny(`provider ${provider} is not enabled`);
-    const bodyText = request.method === "POST" ? await request.text() : "";
-    let model = "unknown";
-    let maxOut = 16_000;
-    try {
-      const parsed = JSON.parse(bodyText) as { model?: string; max_output_tokens?: number; max_tokens?: number };
-      model = String(parsed.model ?? model);
-      maxOut = Number(parsed.max_output_tokens ?? parsed.max_tokens ?? maxOut) || maxOut;
-    } catch { /* non-JSON bodies are metered by size */ }
+    if (props.role !== "agent") return deny("only agent computers may call models");
+    const segments = url.pathname.split("/");
+    const provider = segments[4] ?? "";
+    const rest = segments.slice(5).join("/");
+    // Only the metered generation endpoints: no files, batches, images, audio or fine-tuning.
+    const ALLOWED: Record<string, string[]> = { openai: ["responses", "chat/completions"], openrouter: ["v1/chat/completions", "chat/completions"] };
+    if (!ALLOWED[provider]?.includes(rest) || request.method !== "POST") return deny(`${provider}/${rest} is not an allowed model endpoint`);
+    const target = providerTarget(this.env, provider, rest);
+    const key = provider === "openai" ? this.env.OPENAI_API_KEY : this.env.OPENROUTER_API_KEY;
+    if (!target) return deny(`provider ${provider} is not enabled`);
+    let parsed: Record<string, unknown>;
+    try { parsed = JSON.parse(await request.text()) as Record<string, unknown>; } catch { return deny("model requests must be JSON"); }
+    const model = String(parsed.model ?? "unknown");
+    // Clamp the output budget in the request itself, so the reservation below is a true upper bound.
+    const CAP = 32_000;
+    const field = rest === "responses" ? "max_output_tokens" : provider === "openai" ? "max_completion_tokens" : "max_tokens";
+    const requested = Number(parsed[field] ?? parsed.max_tokens ?? parsed.max_completion_tokens ?? CAP);
+    const maxOut = Math.max(1, Math.min(Number.isFinite(requested) ? requested : CAP, CAP));
+    delete parsed.max_tokens;
+    delete parsed.max_completion_tokens;
+    delete parsed.max_output_tokens;
+    parsed[field] = maxOut;
+    const bodyText = JSON.stringify(parsed);
     const objective = objectiveStub(this.env, props.objective);
     const reservation = `${props.computer}-${crypto.randomUUID()}`;
-    const estimate = estimateCost(model, Math.ceil(bodyText.length / 4), Math.min(maxOut, 32_000));
+    const estimate = estimateCost(model, Math.ceil(bodyText.length / 3), maxOut);
     const allowed = await objective.reserveSpend(reservation, props.task ?? null, model, estimate, Number(this.env.SPEND_CAP_MICRO_USD));
     if (!allowed) return new Response(JSON.stringify({ error: { message: "Nest spend cap reached" } }), { status: 429, headers: { "content-type": "application/json" } });
     const headers = new Headers(request.headers);
@@ -320,7 +383,9 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     headers.delete("x-api-key");
     if (key) headers.set("authorization", `Bearer ${key}`);
     headers.set("cf-aig-metadata", JSON.stringify({ objective: props.objective, task: props.task ?? "-", computer: props.computer }));
-    const upstream = await fetch(new Request(url, { method: request.method, headers, body: bodyText || undefined }));
+    headers.delete("host");
+    headers.set("content-type", "application/json");
+    const upstream = await fetch(new Request(target, { method: "POST", headers, body: bodyText }));
     if (!upstream.body) return upstream;
     // Settle with the provider's reported usage when it appears in the stream; otherwise the estimate stands.
     const [toClient, toMeter] = upstream.body.tee();

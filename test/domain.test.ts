@@ -245,3 +245,19 @@ describe("acceptance", () => {
     expect(acceptError(head, req, { ...ok, staleCitations: 2, contextReviewRecorded: true })).toBeNull();
   });
 });
+
+import { receivePackRefs } from "../src/gitproto";
+describe("git receive-pack ref scope", () => {
+  const pkt = (s: string) => `${(s.length + 4).toString(16).padStart(4, "0")}${s}`;
+  const z = "0".repeat(40), a = "a".repeat(40);
+  const enc = (s: string) => new TextEncoder().encode(s);
+  it("reads every ref an update names, including the first line's capabilities", () => {
+    const body = enc(pkt(`${z} ${a} refs/heads/main\0report-status side-band-64k\n`) + pkt(`${z} ${a} refs/heads/evil\n`) + "0000PACK...");
+    expect(receivePackRefs(body)).toEqual(["refs/heads/main", "refs/heads/evil"]);
+  });
+  it("fails closed on malformed input", () => {
+    expect(receivePackRefs(enc("zzzz"))).toEqual(["<malformed>"]);
+    expect(receivePackRefs(enc(pkt("not a ref line")))).toEqual(["<malformed>"]);
+    expect(receivePackRefs(enc("0000"))).toEqual([]);
+  });
+});

@@ -56,8 +56,11 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
   }
 
   // The Artifacts main branch mirrors the accepted head; Workers Builds deploys it when connected.
-  const computer = env.COMPUTERS.getByName(`runner-${candidateId}`);
-  const mirrored = await computer.exec(["bash", "-lc", `cd /workspace/repo 2>/dev/null || git clone --quiet https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${projectRepo(env)}.git /workspace/repo && cd /workspace/repo && git fetch --quiet origin ${candidateBranchName(candidateId)} && git push --quiet origin ${c.commit}:refs/heads/main`], "/workspace", {}, 120).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  // A dedicated mirror computer that never runs candidate code is the only one allowed to move main.
+  const mirror = env.COMPUTERS.getByName("mirror");
+  await mirror.configure({ computer: "mirror", role: "mirror", objective: "harbor-export" });
+  const remote = `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${projectRepo(env)}.git`;
+  const mirrored = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateBranchName(candidateId)} && git merge --ff-only --quiet ${c.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
   await objective.log("Artifacts", "mirror", mirrored.exitCode === 0 ? `Fast-forwarded main to ${c.commit.slice(0, 7)}` : `Main will catch up: ${mirrored.stderr.slice(0, 200)}`);
   return { checkpoint };
 }
@@ -92,7 +95,7 @@ export async function changeContext(env: Env, id: string, body: string, title?: 
   const writer = env.COMPUTERS.getByName("context-writer");
   const repo = `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${contextRepo(env)}.git`;
   const script = `rm -rf /workspace/ctx && git clone --quiet ${repo} /workspace/ctx && cd /workspace/ctx && mkdir -p "$(dirname ${cur.path})" && cat > ${cur.path} && git -c user.name="Nest" -c user.email=context@nest.invalid commit --quiet -am "Accept ${id} version ${parsed.version}" && git push --quiet origin HEAD:main`;
-  await writer.configure({ computer: "context-writer", role: "runner", objective: "harbor-export" });
+  await writer.configure({ computer: "context-writer", role: "context", objective: "harbor-export" });
   const mirrored = await writer.execWithInput(["bash", "-lc", script], nextText).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
   await objective.log("Artifacts", "context", mirrored.exitCode === 0 ? `Committed ${id} version ${parsed.version} to ${contextRepo(env)}` : `Context repo will catch up: ${mirrored.stderr.slice(0, 200)}`);
   return { checkpoint, radius };
