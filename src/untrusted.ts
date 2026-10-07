@@ -24,8 +24,27 @@ const PATTERNS: [RegExp, string][] = [
   [/\bsystem prompt\b/i, "mentions a system prompt"],
 ];
 
-/** Scans only the lines a change adds. Any hit sends the change to a person. */
-export function injectionFindings(diff: string): string[] {
-  const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).join("\n");
-  return PATTERNS.filter(([re]) => re.test(added)).map(([, why]) => why);
+/**
+ * Canonical form for matching: Unicode NFKC (full-width and compatibility letters fold to ASCII),
+ * zero-width and other format characters removed, whitespace collapsed, lines joined so a phrase split
+ * across lines still matches.
+ */
+export function normalizeForScan(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Scans what a change adds (lines starting with "+"), plus any extra text such as the commit message
+ * and file names. Any hit sends the change to a person. This is a tripwire, not the safety boundary:
+ * agent approval never ships code by itself.
+ */
+export function injectionFindings(diff: string, extra: string[] = []): string[] {
+  // Comment leaders are dropped per line so a phrase split across comment lines still reads as one.
+  const leader = /^\s*(?:\/\/+|#+|\/\*+|\*+\/?|<!--|-->|--|;+)\s?/;
+  const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1).replace(leader, "")).join("\n");
+  const text = normalizeForScan([added, ...extra].join("\n"));
+  return PATTERNS.filter(([re]) => re.test(text)).map(([, why]) => why);
 }

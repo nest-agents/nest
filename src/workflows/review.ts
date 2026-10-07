@@ -17,6 +17,11 @@ type Verdictish = { verdict?: string; confidence?: number; summary?: string; fin
 const retry = { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
 
 export async function contributionDiff(env: Env, repo: string, parent: string, commit: string, paths: string[], maxChars = 60_000): Promise<string> {
+  return (await contributionDiffInfo(env, repo, parent, commit, paths, maxChars)).text;
+}
+
+/** The diff for prompts (bounded) and whether anything was left out. */
+export async function contributionDiffInfo(env: Env, repo: string, parent: string, commit: string, paths: string[], maxChars = 60_000): Promise<{ text: string; truncated: boolean }> {
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const parts: string[] = [];
   let total = 0;
@@ -29,7 +34,7 @@ export async function contributionDiff(env: Env, repo: string, parent: string, c
     total += d.length;
     parts.push(total > maxChars ? `--- ${path}: diff omitted, review budget reached\n` : d);
   }
-  return parts.join("\n");
+  return { text: parts.join("\n"), truncated: total > maxChars };
 }
 
 function routeFor(env: Env, p: Participant): { provider: "openai" | "openrouter" | "workers-ai"; model: string } {
@@ -48,7 +53,10 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
       const state = await objective.state();
       const c = state.contributions.find((x) => x.id === id);
       if (!c) throw new Error(`no contribution ${id}`);
-      const diff = await contributionDiff(this.env, c.repo, c.parent, c.commit, c.paths);
+      const promptDiff = await contributionDiffInfo(this.env, c.repo, c.parent, c.commit, c.paths);
+      const diff = promptDiff.text;
+      // The tripwire scans everything the change adds, not just what fits in the prompt.
+      const fullDiff = promptDiff.truncated ? (await contributionDiffInfo(this.env, c.repo, c.parent, c.commit, c.paths, 4_000_000)).text : diff;
       const context = await project.context();
       const notes = await project.notes();
       const author = state.participants.find((p) => p.id === c.author);
@@ -63,7 +71,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
       const repoSections = await repositorySections(this.env, c.repo, c.commit, "Repository after this change", 60_000, nonce);
       const repoText = repoSections.map((s) => `### ${s.title}\n${s.text}`).join("\n\n");
       return {
-        nonce, injection: injectionFindings(diff),
+        nonce, injection: injectionFindings(fullDiff, [c.message, ...c.paths]), truncated: promptDiff.truncated,
         title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative, repoText,
         author: author ? `${author.name} (${author.kind === "agent" ? author.model : "person"})` : c.author,
         participants: state.participants,
@@ -80,6 +88,11 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
     if (input.injection.length) {
       await step.do("flag possible prompt injection", async () => {
         await objective.flagContribution(id, `Possible prompt injection in the change: ${input.injection.join("; ")}`);
+      });
+    }
+    if (input.truncated) {
+      await step.do("flag oversized change", async () => {
+        await objective.flagContribution(id, "The change is larger than the reviewers' budget, so agents did not see all of it");
       });
     }
 
