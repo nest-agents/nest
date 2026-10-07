@@ -92,6 +92,13 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return new Response(null, { status: 204, headers: { "set-cookie": `nest_owner=${encodeURIComponent(env.NEST_OWNER_TOKEN)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800` } });
   }
 
+  if (route === "POST /api/admin/reset") {
+    require(p, "owner");
+    await objective.reset();
+    await project.reset();
+    return json({ reset: true });
+  }
+
   if (route === "POST /api/admin/bootstrap") {
     require(p, "owner");
     return json(await bootstrap(env));

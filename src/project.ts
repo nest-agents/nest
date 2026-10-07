@@ -98,6 +98,11 @@ export class ProjectDO extends DurableObject<Env> {
     }));
   }
 
+  /** Owner-only, for rehearsals. The next bootstrap re-reads the seed repositories. */
+  async reset(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+  }
+
   /** First checkpoint: the seed commit plus the seed context. Idempotent. */
   async bootstrap(commit: string, items: ContextItem[]): Promise<Checkpoint> {
     const existing = this.head();

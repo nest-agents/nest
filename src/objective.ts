@@ -524,6 +524,13 @@ export class ObjectiveDO extends DurableObject<Env> {
     return { usedMicroUsd: rows.reduce((a, r) => a + Number(r.s), 0), calls: rows.reduce((a, r) => a + Number(r.n), 0), byModel };
   }
 
+  /** Owner-only, for rehearsals: forget all coordination state. Repositories in Artifacts are untouched. */
+  async reset(): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) ws.close(1012, "objective reset");
+    await this.ctx.storage.deleteAll();
+    this.sql.exec("SELECT 1");
+  }
+
   // ---------- snapshot ----------
 
   state() {
