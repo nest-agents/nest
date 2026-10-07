@@ -3,7 +3,8 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { ingestPush } from "../ingest";
-import { gatewayBase } from "../models";
+import { chat, gatewayBase, parseJsonReply } from "../models";
+import { boundary, UNTRUSTED_RULE, wrapUntrusted } from "../untrusted";
 import { agentComputer, objectiveStub, parseWorkspaceRepo, projectRepo, projectStub, short } from "../names";
 import { buildPack } from "../packs";
 
@@ -158,12 +159,16 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     if (paused) {
       return await step.do("pause at a boundary", async () => {
+        const log = await computer.agentOutput(60_000).catch(() => "");
         const stopped = await computer.stopAgent();
         await computer.exec(["bash", "-lc", "git push --quiet origin HEAD:main || true"], REPO_DIR);
         const results = stopped.head ? await ingestPush(env, repo, stopped.head) : [];
         const key = stopped.uncommitted.trim() ? `pauses/${tid}-e${epoch}.patch` : null;
         if (key) await env.OBJECTS.put(key, stopped.uncommitted, { httpMetadata: { contentType: "text/x-diff" } });
         const notes = (await objective.events(0, 1000)).filter((e) => e.kind === "note" && e.data !== null && (JSON.parse(e.data) as { task?: string }).task === tid).map((e) => e.text);
+        // The outgoing agent's own activity, summarized on Workers AI, so the next model starts where it stopped.
+        const progress = await summarizeProgress(env, objective, setup.who.name, log, stopped.uncommitted).catch(() => []);
+        notes.push(...progress);
         const handover: Handover = { patch: key, head: stopped.head, notes, by: pid };
         await objective.pause(tid, epoch, JSON.stringify(handover));
         await objective.log("R2", "handover", `Saved ${setup.who.name}'s portable checkpoint: ${short(stopped.head || "-------")}${key ? " plus uncommitted work" : ""}, ${notes.length} notes`, { task: tid, epoch });
@@ -185,4 +190,44 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       return { ok, results };
     });
   }
+}
+
+/**
+ * Turns the tail of an agent's activity log (tool calls and its own remarks) into a few handover notes.
+ * The log is participant-written text, so it reaches the model as data inside a random boundary.
+ */
+async function summarizeProgress(
+  env: Env,
+  objective: DurableObjectStub<import("../objective").ObjectiveDO>,
+  name: string,
+  log: string,
+  uncommitted: string,
+): Promise<string[]> {
+  const lines = log.split("\n").filter(Boolean).slice(-120).map((l) => {
+    try {
+      const e = JSON.parse(l) as Record<string, unknown>;
+      if (e.type === "tool") return `tool ${String(e.name)}: ${String(e.detail ?? "")}`;
+      if (e.type === "say") return `said: ${String(e.text ?? "")}`;
+      const item = e.item as { type?: string; text?: string; command?: string } | undefined;
+      if (item?.text) return `${item.type ?? "note"}: ${item.text}`;
+      if (item?.command) return `ran: ${item.command}`;
+      return "";
+    } catch {
+      return l.slice(0, 300);
+    }
+  }).filter(Boolean).join("\n").slice(-12_000);
+  if (!lines && !uncommitted.trim()) return [];
+  const nonce = boundary();
+  const changed = [...uncommitted.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]).slice(0, 20).join(", ");
+  const r = await chat(env, { provider: "workers-ai", model: env.REVIEW_MODEL_WORKERS_AI }, [
+    { role: "system", content: `You write handover notes when an engineer is paused mid-task. ${UNTRUSTED_RULE.replaceAll("<id>", nonce)} Reply with JSON only: {"notes":["...", "..."]} with 2 to 4 short notes: what is done, what was in progress, and the next step.` },
+    { role: "user", content: `${name}'s recent activity:\n${wrapUntrusted(nonce, "activity log", lines || "(no activity recorded)")}\n\nUncommitted files: ${changed || "none"}` },
+  ], {
+    maxTokens: 400,
+    reserve: (rid: string, micro: number, model: string) => objective.reserveSpend(rid, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)),
+    settle: (rid: string, micro: number) => objective.settleSpend(rid, micro),
+    metadata: { role: "handover" },
+  });
+  const parsed = parseJsonReply<{ notes?: unknown[] }>(r.text);
+  return (parsed?.notes ?? []).map((n) => `${name}'s progress: ${String(n).slice(0, 400)}`).slice(0, 4);
 }
