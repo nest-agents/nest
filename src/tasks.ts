@@ -1,0 +1,48 @@
+// Starting task attempts. A new attempt forks the accepted checkpoint, or the paused attempt's workspace
+// when the task is being handed over, so the next participant continues from the exact same tree.
+
+import { ArtifactsClient } from "./artifacts";
+import { taskToken } from "./auth";
+import { objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, workspaceRepo } from "./names";
+
+export class TaskError extends Error {
+  constructor(readonly code: string, message = code) {
+    super(message);
+  }
+}
+
+export async function startTask(env: Env, taskId: string, participantId: string, mode: "agent" | "manual") {
+  const objective = objectiveStub(env);
+  const project = projectStub(env);
+  const t = await objective.task(taskId);
+  if (!t) throw new TaskError("NOT_FOUND");
+  if (t.status === "running") throw new TaskError("ALREADY_RUNNING");
+  const participants = await objective.participants();
+  const who = participants.find((p) => p.id === participantId);
+  if (!who) throw new TaskError("UNKNOWN_PARTICIPANT");
+  if (mode === "agent" && !["codex", "nest-agent", "opencode"].includes(who.harness)) throw new TaskError("NOT_A_WORKER", `${who.name} cannot run tasks`);
+  const head = await project.head();
+  if (!head) throw new TaskError("NOT_BOOTSTRAPPED");
+
+  const epoch = t.epoch + 1;
+  const repo = workspaceRepo(OBJECTIVE_ID, taskId, epoch);
+  const artifacts = new ArtifactsClient(env.ARTIFACTS);
+  const handover = t.status === "paused" && t.repo;
+  const source = handover ? t.repo! : projectRepo(env);
+  await artifacts.fork(source, repo, `Nest ${taskId} attempt ${epoch}`);
+  await objective.startAttempt(taskId, participantId, t.epoch, repo);
+  await objective.log("Artifacts", "fork", handover
+    ? `Forked ${source} into ${repo} so ${who.name} continues from the paused tree`
+    : `Forked checkpoint ${head.version} into ${repo}`, { task: taskId, epoch, repo });
+
+  if (mode === "manual") {
+    // A person or external agent pushing from their own machine: a short-lived write token for this fork only.
+    const token = await artifacts.token(repo, "write", 3600);
+    using r = await env.ARTIFACTS.get(repo);
+    const info = await r.info();
+    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, OBJECTIVE_ID, taskId, epoch), epoch };
+  }
+  const workflow = `task-${taskId}-e${epoch}`;
+  await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });
+  return { repo, epoch, workflow };
+}

@@ -14,7 +14,6 @@ export type CommitFacts = {
 };
 export type ChangedPath = { path: string; mode: string; change: "add" | "modify" | "delete" };
 
-const SPECIAL_MODES = new Set(["120000", "160000"]);
 
 export class ArtifactsClient {
   constructor(private readonly binding: Artifacts) {}
@@ -50,8 +49,7 @@ export class ArtifactsClient {
     using repo = await this.binding.get(repoName);
     const t = await repo.createToken(scope, Math.max(60, Math.min(ttlSeconds, 3600)));
     // Tokens look like "<secret>?expires=<unix>"; git wants only the secret part.
-    const plaintext = String(t.plaintext);
-    return { secret: plaintext.split("?expires=")[0]!, expiresAt: String(t.expiresAt), id: plaintext };
+    return { secret: t.plaintext.split("?expires=")[0]!, expiresAt: t.expiresAt, id: t.id };
   }
 
   async revoke(repoName: string, tokenOrId: string): Promise<boolean> {
@@ -70,14 +68,13 @@ export class ArtifactsClient {
     using repo = await this.binding.get(repoName);
     const c = await repo.readCommit(sha);
     if (!c) return null;
-    const anyC = c as unknown as Record<string, unknown>;
     return {
-      commit: String(anyC.hash ?? sha),
-      parents: (anyC.parents as string[] | undefined) ?? [],
-      tree: String(anyC.treeHash ?? anyC.tree ?? ""),
-      message: String(anyC.message ?? ""),
-      author: String((anyC.author as { name?: string } | undefined)?.name ?? ""),
-      timestamp: anyC.timestamp ? String(anyC.timestamp) : undefined,
+      commit: c.hash,
+      parents: c.parents,
+      tree: c.treeHash,
+      message: c.message,
+      author: `${c.author.name} <${c.author.email}>`,
+      timestamp: new Date(c.authoredAt * 1000).toISOString(),
     };
   }
 
@@ -98,9 +95,9 @@ export class ArtifactsClient {
     const paths: ChangedPath[] = [];
     let special = false;
     const read = async (hash: string | null) => {
-      if (!hash) return new Map<string, { hash: string; mode: string; type: string }>();
+      if (!hash) return new Map<string, ArtifactsTreeEntry>();
       const entries = (await repo.readTree(hash)) ?? [];
-      return new Map(entries.map((e) => [e.name, { hash: e.hash, mode: String(e.mode), type: String(e.type) }]));
+      return new Map(entries.map((e) => [e.name, e]));
     };
     const walk = async (a: string | null, b: string | null, prefix: string, depth: number) => {
       if (depth > 32) throw new Error("tree too deep");
@@ -110,15 +107,16 @@ export class ArtifactsClient {
         const r = right.get(name);
         if (l && r && l.hash === r.hash && l.mode === r.mode) continue;
         const path = prefix + name;
-        const isTree = (e?: { type: string; mode: string }) => !!e && (e.type === "tree" || e.mode === "40000" || e.mode === "040000");
+        const isTree = (e?: ArtifactsTreeEntry) => !!e && e.type === "tree";
         if (isTree(l) || isTree(r)) {
           await walk(isTree(l) ? l!.hash : null, isTree(r) ? r!.hash : null, `${path}/`, depth + 1);
           if (l && !isTree(l)) paths.push({ path, mode: l.mode, change: "delete" });
           if (r && !isTree(r)) paths.push({ path, mode: r.mode, change: "add" });
           continue;
         }
-        const mode = (r ?? l)!.mode;
-        if (SPECIAL_MODES.has(mode)) special = true;
+        const entry = (r ?? l)!;
+        const mode = entry.mode;
+        if (entry.type === "symlink" || entry.type === "gitlink") special = true;
         paths.push({ path, mode, change: !l ? "add" : !r ? "delete" : "modify" });
         if (paths.length > 2000) throw new Error("too many changed paths");
       }
@@ -146,13 +144,13 @@ export class ArtifactsClient {
     using repo = await this.binding.get(repoName);
     const c = await repo.readCommit(commit);
     if (!c) return [];
-    const root = String((c as unknown as Record<string, unknown>).treeHash ?? "");
+    const root = c.treeHash;
     const out: { path: string; hash: string; mode: string }[] = [];
     const walk = async (hash: string, prefix: string) => {
       for (const e of (await repo.readTree(hash)) ?? []) {
         const path = prefix + e.name;
-        if (String(e.type) === "tree") await walk(e.hash, `${path}/`);
-        else out.push({ path, hash: e.hash, mode: String(e.mode) });
+        if (e.type === "tree") await walk(e.hash, `${path}/`);
+        else out.push({ path, hash: e.hash, mode: e.mode });
         if (out.length > limit) throw new Error("repository too large to list");
       }
     };

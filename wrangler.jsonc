@@ -18,7 +18,8 @@
     "REVIEW_MODEL_OPENAI": "gpt-6-luna",
     "REVIEW_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
     "REVIEW_MODEL_WORKERS_AI": "@cf/openai/gpt-oss-120b",
-    "SPEND_CAP_MICRO_USD": "50000000"
+    "SPEND_CAP_MICRO_USD": "50000000",
+    "AUTO_REPAIR_AGENT": "kestrel"
   },
 
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "nest" }],
@@ -57,7 +58,7 @@
       {
         "type": "cf.artifacts.repo.pushed",
         "filter": { "namespace": "nest" },
-        "target": { "scriptName": "nest", "workflowName": "nest-ingest" }
+        "targets": [{ "type": "workflow", "workflow_name": "nest-ingest" }]
       }
     ]
   },

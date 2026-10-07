@@ -11,7 +11,7 @@ type Row = Record<string, string | number | null>;
 export type Participant = { id: string; kind: ParticipantKind; name: string; family: string; model: string; harness: string };
 export type Task = {
   id: string; title: string; brief: string; alternative: string | null; status: string; epoch: number;
-  participant: string | null; repo: string | null; baseVersion: number; createdAt: string; pausedNote: string | null;
+  participant: string | null; repo: string | null; baseVersion: number; createdAt: string; pausedNote: string | null; baseCommit: string | null;
 };
 export type Contribution = {
   id: string; seq: number; task: string | null; epoch: number; author: string; repo: string; commit: string; parent: string;
@@ -28,7 +28,8 @@ export type Candidate = {
   previewReady: boolean; note: string | null; conflict: string | null; createdAt: string;
 };
 export type InboxItem = { id: string; kind: string; target: string; reasons: string[]; status: string; createdAt: string; resolution: string | null };
-export type NestEvent = { seq: number; at: string; svc: string; kind: string; text: string; data: unknown };
+/** `data` is a JSON string so events cross Workers RPC with exact types; parse it where needed. */
+export type NestEvent = { seq: number; at: string; svc: string; kind: string; text: string; data: string | null };
 
 export class ObjectiveError extends Error {
   constructor(readonly code: string, message = code) {
@@ -47,7 +48,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, svc TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, data TEXT);
       CREATE TABLE IF NOT EXISTS participants(id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, family TEXT NOT NULL, model TEXT NOT NULL, harness TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, title TEXT NOT NULL, brief TEXT NOT NULL, alternative TEXT, status TEXT NOT NULL,
-        epoch INTEGER NOT NULL, participant TEXT, repo TEXT, base_version INTEGER NOT NULL, created_at TEXT NOT NULL, paused_note TEXT);
+        epoch INTEGER NOT NULL, participant TEXT, repo TEXT, base_version INTEGER NOT NULL, created_at TEXT NOT NULL, paused_note TEXT, base_commit TEXT);
       CREATE TABLE IF NOT EXISTS attempts(task TEXT NOT NULL, epoch INTEGER NOT NULL, participant TEXT NOT NULL, repo TEXT NOT NULL,
         started_at TEXT NOT NULL, ended_at TEXT, outcome TEXT, PRIMARY KEY(task, epoch));
       CREATE UNIQUE INDEX IF NOT EXISTS attempts_repo ON attempts(repo);
@@ -79,7 +80,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     const seq = Number(
       this.sql.exec<{ seq: number }>("INSERT INTO events(at, svc, kind, text, data) VALUES (?, ?, ?, ?, ?) RETURNING seq", at, svc, kind, text, data === null ? null : JSON.stringify(data)).one().seq,
     );
-    const event = { seq, at, svc, kind, text, data };
+    const event: NestEvent = { seq, at, svc, kind, text, data: data === null ? null : JSON.stringify(data) };
     const message = JSON.stringify({ type: "event", event });
     for (const ws of this.ctx.getWebSockets()) {
       try { ws.send(message); } catch { /* closed sockets are cleaned up by the runtime */ }
@@ -92,7 +93,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     return this.sql
       .exec<Row>("SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?", after, Math.min(limit, 1000))
       .toArray()
-      .map((r) => ({ seq: Number(r.seq), at: String(r.at), svc: String(r.svc), kind: String(r.kind), text: String(r.text), data: r.data ? JSON.parse(String(r.data)) : null }));
+      .map((r) => ({ seq: Number(r.seq), at: String(r.at), svc: String(r.svc), kind: String(r.kind), text: String(r.text), data: r.data === null ? null : String(r.data) }));
   }
 
   /** Public log entry for work done elsewhere (workflows, sandboxes, gateway). */
@@ -153,6 +154,9 @@ export class ObjectiveDO extends DurableObject<Env> {
   }
 
   upsertParticipant(p: Participant): Participant {
+    const prior = this.participant(p.id);
+    if (prior && (prior.kind !== p.kind || prior.family !== p.family))
+      throw new ObjectiveError("IDENTITY_IMMUTABLE", `${p.id} is registered as ${prior.kind}/${prior.family}`);
     this.sql.exec(
       "INSERT INTO participants VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, name = excluded.name, family = excluded.family, model = excluded.model, harness = excluded.harness",
       p.id, p.kind, p.name, p.family, p.model, p.harness,
@@ -172,12 +176,15 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   // ---------- tasks and fenced attempts ----------
 
-  createTask(input: { id: string; title: string; brief: string; alternative?: string | null; baseVersion: number }): Task {
+  createTask(input: { id: string; title: string; brief: string; alternative?: string | null; baseVersion: number; baseCommit?: string | null }): Task {
     const existing = this.task(input.id);
     if (existing) return existing;
+    if (input.baseCommit && !/^[0-9a-f]{40}$/.test(input.baseCommit)) throw new ObjectiveError("INVALID_BASE");
+    if (input.baseCommit && !this.sql.exec<Row>("SELECT 1 FROM materializations WHERE commit_sha = ?", input.baseCommit).toArray()[0])
+      throw new ObjectiveError("INVALID_BASE", "a repair must start from a Nest-composed outcome");
     this.sql.exec(
-      "INSERT INTO tasks VALUES (?, ?, ?, ?, 'open', 0, NULL, NULL, ?, ?, NULL)",
-      input.id, input.title, input.brief, input.alternative ?? null, input.baseVersion, new Date().toISOString(),
+      "INSERT INTO tasks VALUES (?, ?, ?, ?, 'open', 0, NULL, NULL, ?, ?, NULL, ?)",
+      input.id, input.title, input.brief, input.alternative ?? null, input.baseVersion, new Date().toISOString(), input.baseCommit ?? null,
     );
     this.emit("Durable Objects", "task", `Task opened: ${input.title}`, { task: input.id });
     return this.task(input.id)!;
@@ -248,9 +255,9 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   // ---------- contributions ----------
 
-  authoringIndex(): { byCommit: [string, { id: string; requires: string[] }][]; materializations: [string, string[]][] } {
-    const byCommit = this.contributions().map((c) => [c.commit, { id: c.id, requires: c.requires }] as [string, { id: string; requires: string[] }]);
-    const materializations = this.sql.exec<Row>("SELECT * FROM materializations").toArray().map((r) => [String(r.commit_sha), JSON.parse(String(r.deps))] as [string, string[]]);
+  authoringIndex(): { byCommit: { commit: string; id: string; requires: string[] }[]; materializations: { commit: string; deps: string[] }[] } {
+    const byCommit = this.contributions().map((c) => ({ commit: c.commit, id: c.id, requires: c.requires }));
+    const materializations = this.sql.exec<Row>("SELECT * FROM materializations").toArray().map((r) => ({ commit: String(r.commit_sha), deps: JSON.parse(String(r.deps)) as string[] }));
     return { byCommit, materializations };
   }
 
@@ -261,6 +268,14 @@ export class ObjectiveDO extends DurableObject<Env> {
   registerContribution(c: Omit<Contribution, "seq" | "status" | "createdAt">): { contribution: Contribution; created: boolean } {
     const prior = this.contribution(c.id);
     if (prior) return { contribution: prior, created: false };
+    // Re-check the attempt here: a pause between the caller's check and this call must still fence.
+    const attempt = this.sql.exec<Row>(
+      "SELECT a.participant, a.repo, t.epoch AS cur, t.status FROM attempts a JOIN tasks t ON t.id = a.task WHERE a.task = ? AND a.epoch = ?",
+      c.task, c.epoch,
+    ).toArray()[0];
+    if (!attempt) throw new ObjectiveError("NOT_FOUND", `no attempt ${c.task}/e${c.epoch}`);
+    if (Number(attempt.cur) !== c.epoch || String(attempt.status) !== "running") throw new ObjectiveError("STALE_EPOCH", `attempt ${c.epoch} is fenced`);
+    if (String(attempt.repo) !== c.repo || String(attempt.participant) !== c.author) throw new ObjectiveError("ATTEMPT_MISMATCH");
     for (const d of c.requires) if (!this.contribution(d)) throw new ObjectiveError("MISSING_DEPENDENCY", d);
     if (c.supersedes && !this.contribution(c.supersedes)) throw new ObjectiveError("MISSING_DEPENDENCY", c.supersedes);
     const seq = Number(this.sql.exec<{ n: number | null }>("SELECT MAX(seq) n FROM contributions").one().n ?? 0) + 1;
@@ -307,9 +322,18 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   // ---------- reviews and routing ----------
 
-  addReview(r: Omit<Review, "createdAt">, cites: Citation[] = []): { review: Review; routing: Routing } {
-    const target = this.contribution(r.target);
-    if (!target) throw new ObjectiveError("NOT_FOUND", `no contribution ${r.target}`);
+  /**
+   * The reviewer must be a registered participant. Kind and family come from the registry, never
+   * from the caller, so a review cannot claim to be a person's or another model family's.
+   */
+  addReview(input: Omit<Review, "createdAt" | "kind" | "family">, cites: Citation[] = []): { review: Review; routing: Routing } {
+    const target = this.contribution(input.target);
+    if (!target) throw new ObjectiveError("NOT_FOUND", `no contribution ${input.target}`);
+    const reviewer = this.participant(input.reviewer);
+    if (!reviewer) throw new ObjectiveError("UNKNOWN_REVIEWER", input.reviewer);
+    if (input.triage && reviewer.harness !== "triage") throw new ObjectiveError("NOT_TRIAGE", input.reviewer);
+    if (!["approve", "changes", "block", "comment"].includes(input.verdict)) throw new ObjectiveError("INVALID_VERDICT");
+    const r: Omit<Review, "createdAt"> = { ...input, kind: reviewer.kind, family: reviewer.family, confidence: Number.isFinite(input.confidence) ? input.confidence : 0 };
     const existing = this.sql.exec<Row>("SELECT id FROM reviews WHERE id = ?", r.id).toArray()[0];
     if (!existing) {
       this.ctx.storage.transactionSync(() => {
@@ -444,7 +468,12 @@ export class ObjectiveDO extends DurableObject<Env> {
     return this.sql.exec<Row>("SELECT * FROM candidates ORDER BY created_at DESC").toArray().map(rowToCandidate);
   }
 
-  markAccepted(candidateId: string, contributionIds: string[]) {
+  /** Called only with the checkpoint the ProjectDO compare-and-swap just produced for this candidate. */
+  markAccepted(candidateId: string, checkpoint: { candidate: string | null; version: number }) {
+    if (checkpoint.candidate !== candidateId) throw new ObjectiveError("NOT_ACCEPTED", "checkpoint does not name this candidate");
+    const c = this.candidate(candidateId);
+    if (!c) throw new ObjectiveError("NOT_FOUND");
+    const contributionIds = c.order;
     this.ctx.storage.transactionSync(() => {
       for (const id of contributionIds) this.sql.exec("UPDATE contributions SET status = 'accepted' WHERE id = ?", id);
       this.sql.exec("UPDATE candidates SET status = 'accepted' WHERE id = ?", candidateId);
@@ -460,8 +489,10 @@ export class ObjectiveDO extends DurableObject<Env> {
   // ---------- spend (central counter for every model call) ----------
 
   reserveSpend(id: string, task: string | null, model: string, microUsd: number, capMicroUsd: number): boolean {
+    // An id is honoured once and only while unsettled, so replaying it cannot bypass the cap.
     const existing = this.sql.exec<Row>("SELECT state FROM spend WHERE id = ?", id).toArray()[0];
-    if (existing) return existing.state !== "refused";
+    if (existing) return existing.state === "reserved";
+    if (!Number.isSafeInteger(microUsd) || microUsd <= 0) throw new ObjectiveError("INVALID_RESERVATION");
     const used = Number(this.sql.exec<{ s: number | null }>("SELECT SUM(COALESCE(actual, reserved)) s FROM spend WHERE state != 'refused'").one().s ?? 0);
     const ok = used + microUsd <= capMicroUsd;
     this.sql.exec("INSERT INTO spend VALUES (?, ?, ?, ?, NULL, ?, ?)", id, task, model, microUsd, ok ? "reserved" : "refused", new Date().toISOString());
@@ -483,7 +514,7 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   state() {
     return {
-      objective: { id: this.meta("objective"), title: this.meta("title"), criteria: JSON.parse(this.meta("criteria") ?? "[]"), project: this.meta("project") },
+      objective: { id: this.meta("objective"), title: this.meta("title"), criteria: JSON.parse(this.meta("criteria") ?? "[]") as string[], project: this.meta("project") },
       policy: this.policy(),
       participants: this.participants(),
       tasks: this.tasks(),
@@ -502,6 +533,7 @@ function rowToTask(r: Row): Task {
     id: String(r.id), title: String(r.title), brief: String(r.brief), alternative: r.alternative ? String(r.alternative) : null, status: String(r.status),
     epoch: Number(r.epoch), participant: r.participant ? String(r.participant) : null, repo: r.repo ? String(r.repo) : null,
     baseVersion: Number(r.base_version), createdAt: String(r.created_at), pausedNote: r.paused_note ? String(r.paused_note) : null,
+    baseCommit: r.base_commit ? String(r.base_commit) : null,
   };
 }
 

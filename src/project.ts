@@ -5,6 +5,9 @@ import { DurableObject } from "cloudflare:workers";
 import { digestOf } from "./protocol";
 import type { Head } from "./domain/accept";
 
+/** Machine-readable block from a context item. Concrete so it crosses Workers RPC with exact types. */
+export type PolicyBlock = { columns?: string[]; agentReviewers?: number; minConfidence?: number; protectedPaths?: string[] };
+
 export type ContextItem = {
   id: string;
   version: number;
@@ -12,7 +15,7 @@ export type ContextItem = {
   title: string;
   owner: string;
   body: string;
-  policy: Record<string, unknown> | null;
+  policy: PolicyBlock | null;
   commit: string;
   path: string;
 };
@@ -38,6 +41,7 @@ export class ProjectDO extends DurableObject<Env> {
         owner TEXT NOT NULL, body TEXT NOT NULL, policy TEXT, commit_sha TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY(id, version));
       CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
   }
 
@@ -78,6 +82,20 @@ export class ProjectDO extends DurableObject<Env> {
 
   contextHistory(id: string): ContextItem[] {
     return this.sql.exec<Record<string, string | number | null>>("SELECT * FROM context_items WHERE id = ? ORDER BY version", id).toArray().map(rowToItem);
+  }
+
+  /**
+   * Notes compound context without changing the accepted requirement set: rejected approaches with the
+   * reason they lost, and review findings that held up. Every later pack carries them.
+   */
+  addNote(note: { id: string; kind: "rejected" | "finding"; title: string; body: string; source: string }): void {
+    this.sql.exec("INSERT OR IGNORE INTO notes VALUES (?, ?, ?, ?, ?, ?)", note.id, note.kind, note.title.slice(0, 200), note.body.slice(0, 8000), note.source, new Date().toISOString());
+  }
+
+  notes(): { id: string; kind: string; title: string; body: string; source: string; createdAt: string }[] {
+    return this.sql.exec<Record<string, string>>("SELECT * FROM notes ORDER BY created_at").toArray().map((r) => ({
+      id: String(r.id), kind: String(r.kind), title: String(r.title), body: String(r.body), source: String(r.source), createdAt: String(r.created_at),
+    }));
   }
 
   /** First checkpoint: the seed commit plus the seed context. Idempotent. */

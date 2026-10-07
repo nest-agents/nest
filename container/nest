@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# nest: the agent's side of Nest. Requests go to nest.internal, which the computer's Outbound
+# entrypoint signs with this attempt's identity. No credentials live in this container.
+set -euo pipefail
+API="http://nest.internal/api"
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  pack)          curl -fsS "$API/pack" ;;
+  search)        curl -fsS --get --data-urlencode "q=${*}" "$API/search" | jq -r '.results[] | "[\(.cite)] \(.title)\n\(.text)\n"' ;;
+  contributions) curl -fsS "$API/contributions" | jq -r '.[] | "\(.id)  \(.status)\t\(.author)\t\(.alternative // "-")\t\(.title)\n    files: \(.paths | join(", "))"' ;;
+  show)          curl -fsS "$API/contributions/${1:?usage: nest show <contribution-id>}" | jq -r '"\(.id) \(.title) by \(.author)\n\(.message)\n", (.files[] | "--- \(.path)\n\(.content)\n")' ;;
+  note)          jq -n --arg text "$*" '{text: $text}' | curl -fsS -X POST -H 'content-type: application/json' --data @- "$API/note" >/dev/null && echo "noted" ;;
+  publish)
+    git push --quiet origin HEAD:main
+    jq -n --arg repo "$NEST_REPO" --arg commit "$(git rev-parse HEAD)" '{repo: $repo, commit: $commit}' \
+      | curl -fsS -X POST -H 'content-type: application/json' --data @- "$API/publish" \
+      | jq -r '.[] | if .status == "rejected" then "REJECTED \(.commit[0:7]): \(.reason)" else "\(.status) \(.commit[0:7]) as \(.contribution)" end' ;;
+  *) cat <<'HELP'
+nest pack                    print your context pack (requirements, decisions, rejected approaches, related work)
+nest search "<query>"        search the project's context; results carry citations
+nest contributions           list everyone's contributions
+nest show <id>               print one contribution's message and changed files
+nest note "<text>"           record progress for whoever continues this task
+nest publish                 push HEAD to your workspace and register each new commit as a contribution
+HELP
+  ;;
+esac

@@ -1,0 +1,148 @@
+// ReviewWorkflow: triage on Workers AI, then independent reviewers from families other than the
+// author's, each returning a structured verdict that cites requirements. Routing decides who else.
+
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { ArtifactsClient } from "../artifacts";
+import { citeOf } from "../context";
+import { unifiedDiff } from "../diff";
+import { chat, parseJsonReply, type ChatMessage } from "../models";
+import { objectiveStub, projectStub, short } from "../names";
+import { parseCitation, type Citation, type Verdict } from "../protocol";
+import type { Participant } from "../objective";
+
+type Params = { objective: string; contribution: string };
+type Verdictish = { verdict?: string; confidence?: number; summary?: string; findings?: { path?: string; line?: number; severity?: string; text?: string; cite?: string }[]; risk?: string };
+
+const retry = { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
+
+export async function contributionDiff(env: Env, repo: string, parent: string, commit: string, paths: string[], maxChars = 60_000): Promise<string> {
+  const artifacts = new ArtifactsClient(env.ARTIFACTS);
+  const parts: string[] = [];
+  let total = 0;
+  for (const path of paths) {
+    const [before, after] = await Promise.all([
+      artifacts.readText(repo, parent, path).catch(() => null),
+      artifacts.readText(repo, commit, path).catch(() => null),
+    ]);
+    const d = unifiedDiff(path, before, after);
+    total += d.length;
+    parts.push(total > maxChars ? `--- ${path}: diff omitted, review budget reached\n` : d);
+  }
+  return parts.join("\n");
+}
+
+function routeFor(env: Env, p: Participant): { provider: "openai" | "openrouter" | "workers-ai"; model: string } {
+  if (p.family === "openai") return { provider: "openai", model: p.model };
+  if (p.family === "anthropic") return { provider: "openrouter", model: p.model };
+  return { provider: "workers-ai", model: p.model };
+}
+
+export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
+  async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
+    const { objective: objectiveId, contribution: id } = event.payload;
+    const objective = objectiveStub(this.env, objectiveId);
+    const project = projectStub(this.env);
+
+    const input = await step.do("read the contribution and its context", async () => {
+      const state = await objective.state();
+      const c = state.contributions.find((x) => x.id === id);
+      if (!c) throw new Error(`no contribution ${id}`);
+      const diff = await contributionDiff(this.env, c.repo, c.parent, c.commit, c.paths);
+      const context = await project.context();
+      const notes = await project.notes();
+      const author = state.participants.find((p) => p.id === c.author);
+      const contextText = [
+        ...context.filter((i) => ["requirement", "decision", "policy"].includes(i.kind)).map((i) => `### ${i.title} [${citeOf(i)}]\n${i.body}`),
+        ...notes.filter((n) => n.kind === "rejected").map((n) => `### Rejected approach: ${n.title} [${n.id}]\n${n.body}`),
+      ].join("\n\n");
+      const deps = c.requires.map((r) => state.contributions.find((x) => x.id === r)).filter(Boolean).map((d) => `- ${d!.id} ${d!.title}`).join("\n");
+      return {
+        title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative,
+        author: author ? `${author.name} (${author.kind === "agent" ? author.model : "person"})` : c.author,
+        participants: state.participants,
+      };
+    });
+
+    const subject = `Contribution ${id} "${input.title}" by ${input.author}${input.alternative ? `, a competing design in group "${input.alternative}"` : ""}.
+Commit message:
+${input.message}
+${input.deps ? `\nIt depends on:\n${input.deps}\n` : ""}
+Diff:
+${input.diff}`;
+
+    const spend = {
+      reserve: (rid: string, micro: number) => objective.reserveSpend(rid, null, "review", micro, Number(this.env.SPEND_CAP_MICRO_USD)),
+      settle: (rid: string, micro: number) => objective.settleSpend(rid, micro),
+    };
+
+    // 1. Triage on Workers AI.
+    await step.do("triage", retry, async () => {
+      const already = (await objective.reviews(id)).some((r) => r.triage);
+      if (already) return;
+      const messages: ChatMessage[] = [
+        { role: "system", content: "You triage code contributions. Reply with JSON only: {\"risk\":\"low|medium|high\",\"summary\":\"one sentence\"}." },
+        { role: "user", content: subject.slice(0, 30_000) },
+      ];
+      let summary = "Routine change.";
+      let risk = "medium";
+      try {
+        const r = await chat(this.env, { provider: "workers-ai", model: this.env.REVIEW_MODEL_WORKERS_AI }, messages, { maxTokens: 400, ...spend, metadata: { objective: objectiveId, contribution: id, role: "triage" } });
+        const parsed = parseJsonReply<Verdictish>(r.text);
+        summary = parsed?.summary ?? summary;
+        risk = parsed?.risk ?? risk;
+      } catch (e) {
+        summary = `Triage model unavailable (${String(e).slice(0, 120)}); routed to full review.`;
+      }
+      await objective.addReview({ id: `rv-triage-${id}`, target: id, reviewer: "triage", verdict: "comment", confidence: 1, summary: `Risk ${risk}. ${summary}`, findings: [], triage: true });
+    });
+
+    // 2. Independent reviewers, as many as routing asks for.
+    for (let round = 0; round < 3; round++) {
+      const routing = await step.do(`routing ${round}`, async () => {
+        const r = await objective.routing(id);
+        return r.state === "needs-reviewers" ? { state: r.state, count: r.count, excludeFamilies: r.excludeFamilies } : { state: r.state, count: 0, excludeFamilies: [] as string[] };
+      });
+      if (routing.state !== "needs-reviewers") break;
+      const reviewers = input.participants.filter((p) => p.harness === "reviewer" && !routing.excludeFamilies.includes(p.family));
+      const preference = ["anthropic", "openai", "workers-ai"];
+      reviewers.sort((a, b) => preference.indexOf(a.family) - preference.indexOf(b.family));
+      const chosen = reviewers.slice(0, routing.count);
+      if (!chosen.length) {
+        await step.do(`no reviewers available ${round}`, async () => objective.openInbox({ id: `review-${id}`, kind: "review", target: id, reasons: ["No independent agent reviewer is available"] }));
+        break;
+      }
+      await Promise.all(chosen.map((reviewer) =>
+        step.do(`review by ${reviewer.id}`, retry, async () => {
+          const messages: ChatMessage[] = [
+            { role: "system", content: `You are ${reviewer.name}, an independent code reviewer (${reviewer.model}). Review only what this contribution claims to do; a coherent partial piece of a larger objective is fine. Judge it against the project's requirements and decisions and cite them exactly as given in brackets. Reply with JSON only.` },
+            { role: "user", content: `Project context:\n${input.contextText}\n\n---\n\n${subject}\n\n---\nReturn JSON: {"verdict":"approve"|"changes"|"block","confidence":0.0-1.0,"summary":"one or two sentences","findings":[{"path":"...","line":1,"severity":"low|medium|high","text":"...","cite":"req/...@vN"}]}\n- approve: correct for what it claims, consistent with requirements.\n- changes: fixable defects you can point to.\n- block: violates a requirement or takes an approach that cannot work.` },
+          ];
+          let parsed: Verdictish | null = null;
+          let note = "";
+          try {
+            const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: 1800, json: reviewer.family === "openai", ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
+            parsed = parseJsonReply<Verdictish>(r.text);
+            if (!parsed) note = "Reviewer reply was not valid JSON.";
+          } catch (e) {
+            note = `Reviewer unavailable: ${String(e).slice(0, 200)}`;
+          }
+          const verdict = (["approve", "changes", "block"].includes(String(parsed?.verdict)) ? parsed!.verdict : "comment") as Verdict;
+          const findings = (parsed?.findings ?? []).slice(0, 20).map((f) => ({ path: f.path, line: f.line, severity: f.severity, text: String(f.text ?? "").slice(0, 600), cite: f.cite }));
+          const cites = findings.map((f) => (f.cite ? parseCitation(f.cite) : null)).filter((c): c is Citation => !!c);
+          await objective.addReview({
+            id: `rv-${reviewer.id}-${id}`, target: id, reviewer: reviewer.id, verdict,
+            confidence: typeof parsed?.confidence === "number" ? parsed.confidence : 0,
+            summary: String(parsed?.summary ?? note).slice(0, 2000), findings, triage: false,
+          }, cites);
+        }),
+      ));
+    }
+
+    // 3. Whatever the outcome, the frontier may have changed.
+    await step.do("recompose", async () => {
+      const bucket = Math.floor(Date.now() / 15_000);
+      try { await this.env.COMPOSE.create({ id: `compose-${bucket}`, params: { objective: objectiveId, reason: `reviewed ${short(id)}` } }); } catch { /* one composition per window */ }
+    });
+    return { reviewed: id };
+  }
+}
