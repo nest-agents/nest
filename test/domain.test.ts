@@ -160,6 +160,18 @@ describe("frontier", () => {
     );
     expect(planFrontier(g, new Set(["w-enc"])).map((f) => f.order.join(","))).toEqual(["fix"]);
   });
+  it("lets a reconciled replacement stand in for the original only once it is approved", () => {
+    const g = (status: ContributionNode["status"]) => graph(
+      C("filter", 1),
+      C("sort", 2),
+      C("fixed", 3, { requires: ["filter"], supersedes: "sort", status }),
+    );
+    const pending = planFrontier(g("proposed"), new Set()).map((f) => f.order.join(","));
+    expect(pending).toContain("filter,sort");
+    expect(pending).toContain("filter,fixed");
+    expect(pending.every((o) => !(o.includes("sort") && o.includes("fixed")))).toBe(true);
+    expect(planFrontier(g("approved"), new Set()).map((f) => f.order.join(","))).toEqual(["filter,fixed"]);
+  });
   it("marks an outcome not ready while a member awaits review", () => {
     const f = planFrontier(graph(C("a", 1), C("b", 2, { status: "proposed" })), new Set());
     expect(f[0]!.ready).toBe(false);

@@ -20,6 +20,34 @@ Nest-Attempt: t_export-jobs/e1
 Nest-Cites: req/csv-format@v1
 ```
 
+## A real run, on Cloudflare
+
+These are from one generation of the live deployment on 2026-10-07. Every number comes from the deployment's own ledger.
+
+- **The plan.** Three agents from two model families, given three tasks: two competing export designs, and a shared Export button. Wren ran on Codex with gpt-6-luna. Kestrel and Heron ran on nest-agent with Claude Haiku 5.5.
+- **Contributions and reviews.** The agents published 10 contributions. Workers AI triaged each, and two reviewers from different families reviewed it.
+  - A person was asked twice: once when reviewers disagreed about a mutable job object, and once when a reviewer blocked the button for an endpoint another task owned.
+- **Outcomes.** Nest assembled three whole outcomes with real git: Wren's direct export, Kestrel's background-job export, and **Heron's button on Wren's API**, which no single agent wrote.
+  - All three passed the 7 trusted checks.
+  - All three passed a real browser clicking Export CSV.
+- **Acceptance.** The person accepted the mixed outcome. The losing approach became a note carrying the person's reason.
+- **A requirement change.** The person then changed the export columns requirement to v2 (internal notes must never be exported). Its blast radius was 4 contributions and 3 outcomes.
+  - The accepted checkpoint now failed two checks, so Nest opened one repair, starting from the checkpoint's own tree.
+  - Kestrel fixed it in under a minute, and the person accepted checkpoint 4.
+  - Six contributions that could no longer apply were retired, each with a stated reason.
+- **A handover across families.** Kestrel was paused mid-task with uncommitted work. Workers AI summarized its activity into handover notes, and Wren continued on the other model family. All 19 lines of Kestrel's uncommitted change are in Wren's commit.
+- **Cost.** Model spend for the whole run was **$1.85** across 183 calls.
+
+## Throughput, measured
+
+`scripts/swarm.mjs` gives each of N synthetic contributors a real Artifacts fork and a scoped token. They all push at once, through the real event trigger, ingest Workflow and Durable Object. Reviews are skipped.
+
+| Contributors | Pushes | Registered | Lost | Push to registered (p50 / p90 / max) |
+|---|---|---|---|---|
+| 100 | 100 in 2.8 s, 25 at a time | 100 | 0 | 4.6 s / 7.4 s / 13.9 s |
+
+Setting up 100 forks and tokens took 55 s; forks run five at a time, because simultaneous forks of one repository returned errors. Registration is bounded by event delivery and Workflow start-up, not by the Durable Object.
+
 ## How it uses Cloudflare
 
 | Job | Service |
@@ -30,9 +58,10 @@ Nest-Cites: req/csv-format@v1
 | Tasks, fencing, reviews, outcomes, live updates | **Durable Object** with SQLite and hibernatable WebSockets |
 | Agents (Codex CLI, or the built-in nest-agent), composition with real git, previews | **Containers** through the Sandbox SDK |
 | The only network path out of any container: scoped git tokens, model keys, spend meter | Worker `Outbound` entrypoint |
-| Triage and a third reviewer family | **Workers AI** |
+| Triage, a third reviewer family, handover summaries | **Workers AI** |
+| A real browser clicks Export CSV on every outcome's preview | **Browser Rendering** |
 | Frontier models (OpenAI, Claude via OpenRouter) | **AI Gateway** (or direct, until the gateway exists) |
-| Saved handover state and objects | **R2** |
+| Paused attempts' uncommitted work, outcome screenshots | **R2** |
 | Throughput metrics | **Analytics Engine** |
 | UI | Workers Static Assets |
 
@@ -66,7 +95,7 @@ NEST_URL=https://nest.<subdomain>.workers.dev scripts/scenario.sh    # three age
 | `checks/serve.mjs`, `src/checks/` | Trusted server for candidates, and checks that run outside them |
 | `harbor/`, `seed/context/` | The demo project and its versioned requirements |
 | `public/` | The work map |
-| `docs/` | Architecture, the review of v0.1, evidence |
+| `docs/` | Architecture (what is built, what is not, lessons from live runs), security model, the review of v0.1 |
 | `design/work-map.html` | The interactive prototype (simulated data) |
 
 ## License

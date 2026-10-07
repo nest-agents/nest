@@ -129,7 +129,10 @@ export function planFrontier(
   const live = [...nodes.values()].filter(
     (n) => !accepted.has(n.id) && n.status !== "blocked" && n.status !== "superseded" && n.status !== "accepted",
   );
-  const replaced = new Set(live.map((n) => n.supersedes).filter((x): x is string => !!x));
+  // Superseding your own work retires it at once (its status says so). A replacement of someone else's
+  // work, which only a person-requested reconcile can publish, takes effect once it is approved; until
+  // then both stay plannable, and closure never selects both.
+  const replaced = new Set(live.filter((n) => n.status === "approved" || nodes.get(n.supersedes ?? "")?.status === "superseded").map((n) => n.supersedes).filter((x): x is string => !!x));
   // A file the checkpoint already has cannot be created again: such work can never apply.
   const settled = new Set([...nodes.values()].filter((n) => accepted.has(n.id) || n.status === "accepted").flatMap((n) => n.adds ?? []));
   const dead = new Set(live.filter((n) => (n.adds ?? []).some((p) => settled.has(p))).map((n) => n.id));
@@ -155,6 +158,18 @@ export function planFrontier(
     const name = `overlap:${shared}`;
     groups.set(name, g.map((id) => nodes.get(id)!));
     for (const id of g) implicit.set(id, name);
+  }
+  // A replacement still awaiting approval is a choice between it and the original.
+  const freeSet = new Set(free);
+  for (const n of pool) {
+    const old = n.supersedes;
+    if (!old || replaced.has(old) || !freeSet.has(n.id) || !freeSet.has(old)) continue;
+    const name = implicit.get(old) ?? implicit.get(n.id) ?? `replace:${old}`;
+    const members = groups.get(name) ?? [];
+    for (const m of [nodes.get(old)!, n]) if (!members.some((x) => x.id === m.id)) members.push(m);
+    groups.set(name, members);
+    implicit.set(old, name);
+    implicit.set(n.id, name);
   }
   const groupNames = [...groups.keys()].sort();
   const combos: Record<string, string>[] = [{}];
