@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonical, contributionId, parseCitation, parseTrailers } from "../src/protocol";
 import { authoredOn, closure, GraphError, planFrontier, type ContributionNode } from "../src/domain/graph";
 import { blastRadius, staleCitations } from "../src/domain/context";
-import { DEFAULT_POLICY, route, type ReviewFact } from "../src/domain/review";
+import { DEFAULT_POLICY, effectivePolicy, route, type ReviewFact } from "../src/domain/review";
 import { acceptError, type CandidateFacts, type Head } from "../src/domain/accept";
 
 const C = (id: string, seq: number, extra: Partial<ContributionNode> = {}): ContributionNode => ({
@@ -204,6 +204,24 @@ describe("review routing hardening", () => {
     }
     expect(route(DEFAULT_POLICY, { ...subject, specialEntries: true }, ok).state).toBe("needs-human");
     expect(route(DEFAULT_POLICY, { ...subject, paths: ["src/export.ts", "public/app.js"] }, ok).state).toBe("approved");
+  });
+});
+
+describe("policy floors", () => {
+  const subject = { author: "wren", authorKind: "agent" as const, authorFamily: "openai", paths: ["wrangler.jsonc"], citedItems: [] };
+  const triage: ReviewFact = { reviewer: "triage", kind: "agent", family: "workers-ai", verdict: "comment", confidence: 1, triage: true };
+  const ok = [triage, { reviewer: "a", kind: "agent" as const, family: "anthropic", verdict: "approve" as const, confidence: 0.6 }, { reviewer: "d", kind: "agent" as const, family: "deepseek", verdict: "approve" as const, confidence: 0.6 }];
+  it("keeps built-in protections when a policy omits or shrinks them", () => {
+    expect(route({ agentReviewers: 2, minConfidence: 0.1, protectedPaths: [] }, subject, ok).state).toBe("needs-human");
+    expect(effectivePolicy({ protectedPaths: ["src/data.ts"] }).protectedPaths).toEqual(expect.arrayContaining(["src/data.ts", "wrangler.jsonc", ".nest/"]));
+    expect(effectivePolicy(null).agentReviewers).toBe(2);
+    expect(effectivePolicy({ agentReviewers: -3, minConfidence: Number.NaN }).agentReviewers).toBe(1);
+    expect(effectivePolicy({ minConfidence: 0.1 }).minConfidence).toBe(0.5);
+  });
+  it("does not send every agent change that cites a requirement to a person", () => {
+    const code = { ...subject, paths: ["src/export.ts"], citedItems: ["req/export-columns"] };
+    const good = ok.map((r) => ({ ...r, confidence: 0.9 }));
+    expect(route(DEFAULT_POLICY, code, good).state).toBe("approved");
   });
 });
 

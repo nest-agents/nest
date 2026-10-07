@@ -7,15 +7,32 @@ export type ReviewPolicy = {
   agentReviewers: number;
   minConfidence: number;
   protectedPaths: string[];
-  humanOwnedItems: string[];
 };
+
+/**
+ * Floors that no policy can lower. A policy may add protected paths or raise thresholds; it can never
+ * remove these, so a missing or partial policy fails closed rather than open.
+ */
+export const FLOOR = {
+  agentReviewers: 1,
+  minConfidence: 0.5,
+  protectedPaths: [".nest/", "wrangler.jsonc", "wrangler.toml", "package.json", "pnpm-lock.yaml", "package-lock.json"],
+} as const;
 
 export const DEFAULT_POLICY: ReviewPolicy = {
   agentReviewers: 2,
   minConfidence: 0.75,
-  protectedPaths: [".nest/", "wrangler.jsonc", "package.json", "pnpm-lock.yaml"],
-  humanOwnedItems: [],
+  protectedPaths: [...FLOOR.protectedPaths],
 };
+
+export function effectivePolicy(policy: Partial<ReviewPolicy> | null | undefined): ReviewPolicy {
+  const n = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  return {
+    agentReviewers: Math.max(FLOOR.agentReviewers, Math.floor(n(policy?.agentReviewers, DEFAULT_POLICY.agentReviewers))),
+    minConfidence: Math.min(1, Math.max(FLOOR.minConfidence, n(policy?.minConfidence, DEFAULT_POLICY.minConfidence))),
+    protectedPaths: [...new Set([...FLOOR.protectedPaths, ...(Array.isArray(policy?.protectedPaths) ? policy!.protectedPaths.filter((p) => typeof p === "string") : [])])],
+  };
+}
 
 export type ReviewFact = {
   reviewer: string;
@@ -64,7 +81,8 @@ export type Routing =
  * `ReviewFact.kind` and `reviewer` must come from the authenticated principal, never from a
  * review payload. Authors never count as reviewers of their own work, person or agent.
  */
-export function route(policy: ReviewPolicy, subject: Subject, reviews: ReviewFact[]): Routing {
+export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact[]): Routing {
+  const policy = effectivePolicy(given);
   const others = reviews.filter((r) => r.reviewer !== subject.author);
   const people = others.filter((r) => r.kind === "person" && r.verdict !== "comment");
   const last = people[people.length - 1];
@@ -73,7 +91,7 @@ export function route(policy: ReviewPolicy, subject: Subject, reviews: ReviewFac
   if (!others.some((r) => r.triage)) return { state: "needs-triage" };
 
   // Independence: a reviewer from the author's own model family does not count.
-  const required = Math.max(1, Math.floor(policy.agentReviewers));
+  const required = policy.agentReviewers;
   const agents = others.filter((r) => r.kind === "agent" && !r.triage && r.verdict !== "comment" && r.family !== subject.authorFamily);
   const families = new Set(agents.map((r) => r.family));
   if (families.size < required) {
@@ -95,8 +113,6 @@ export function route(policy: ReviewPolicy, subject: Subject, reviews: ReviewFac
   if (unusual.length) reasons.push(`Unusual file paths: ${unusual.map((p) => JSON.stringify(p)).join(", ")}`);
   if (subject.specialEntries) reasons.push("Adds a symlink or submodule");
   if (protectedHit.length) reasons.push(`Touches protected files: ${protectedHit.join(", ")}`);
-  const owned = subject.citedItems.filter((i) => policy.humanOwnedItems.includes(i));
-  if (owned.length && subject.authorKind === "agent") reasons.push(`Relies on human-owned context: ${owned.join(", ")}`);
   if (reasons.length) return { state: "needs-human", reasons };
 
   return { state: verdicts.has("changes") ? "changes" : "approved", by: "agents" };

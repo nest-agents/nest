@@ -1,0 +1,72 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nest",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp", "/preview/*"] },
+
+  "vars": {
+    "ACCOUNT_ID": "461aad8037e6c7bda5bac789d1393a75",
+    "ARTIFACTS_NAMESPACE": "nest",
+    "AI_GATEWAY_ID": "nest",
+    "PROJECT": "harbor",
+    "AGENT_MODEL_OPENAI": "gpt-6-luna",
+    "AGENT_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
+    "REVIEW_MODEL_OPENAI": "gpt-6-luna",
+    "REVIEW_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
+    "REVIEW_MODEL_WORKERS_AI": "@cf/openai/gpt-oss-120b",
+    "SPEND_CAP_MICRO_USD": "50000000"
+  },
+
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "nest" }],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROJECTS", "class_name": "ProjectDO" },
+      { "name": "OBJECTIVES", "class_name": "ObjectiveDO" },
+      { "name": "COMPUTERS", "class_name": "Computer" }
+    ]
+  },
+  "exports": {
+    "ProjectDO": { "type": "durable-object", "storage": "sqlite" },
+    "ObjectiveDO": { "type": "durable-object", "storage": "sqlite" },
+    "Computer": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "containers": [
+    {
+      "class_name": "Computer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "agent": { "dockerfile": "./container/Dockerfile.agent", "build_context": "." },
+        "runner": { "dockerfile": "./container/Dockerfile.runner", "build_context": "." }
+      }
+    }
+  ],
+
+  "workflows": [
+    { "name": "nest-ingest", "binding": "INGEST", "class_name": "IngestWorkflow" },
+    { "name": "nest-task", "binding": "TASKS", "class_name": "TaskWorkflow" },
+    { "name": "nest-review", "binding": "REVIEWS", "class_name": "ReviewWorkflow" },
+    { "name": "nest-compose", "binding": "COMPOSE", "class_name": "ComposeWorkflow" }
+  ],
+  "triggers": {
+    "events": [
+      {
+        "type": "cf.artifacts.repo.pushed",
+        "filter": { "namespace": "nest" },
+        "target": { "scriptName": "nest", "workflowName": "nest-ingest" }
+      }
+    ]
+  },
+
+  "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "nest-objects" }],
+  "ai": { "binding": "AI" },
+  "browser": { "binding": "BROWSER" },
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "nest_events" }],
+
+  "secrets": { "required": ["NEST_OWNER_TOKEN", "NEST_SIGNING_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"] }
+}
