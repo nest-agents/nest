@@ -49,7 +49,7 @@ export async function chat(
   env: Env,
   route: { provider: "openai" | "openrouter" | "workers-ai"; model: string },
   messages: ChatMessage[],
-  opts: { maxTokens?: number; json?: boolean; metadata?: Record<string, string>; reserve: (id: string, micro: number, model: string) => Promise<boolean>; settle: (id: string, micro: number) => Promise<void> },
+  opts: { maxTokens?: number; json?: boolean; effort?: "low" | "medium" | "high"; metadata?: Record<string, string>; reserve: (id: string, micro: number, model: string) => Promise<boolean>; settle: (id: string, micro: number) => Promise<void> },
 ): Promise<ChatResult> {
   const maxTokens = opts.maxTokens ?? 2000;
   const promptTokens = Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
@@ -79,7 +79,8 @@ export async function chat(
     body: JSON.stringify({
       model: route.model,
       messages,
-      ...(route.provider === "openai" ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+      // On OpenAI reasoning models the completion budget includes reasoning tokens.
+      ...(route.provider === "openai" ? { max_completion_tokens: maxTokens, ...(opts.effort ? { reasoning_effort: opts.effort } : {}) } : { max_tokens: maxTokens }),
       ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     }),
   });

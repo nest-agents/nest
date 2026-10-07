@@ -159,12 +159,17 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           ];
           let parsed: Verdictish | null = null;
           let note = "";
-          try {
-            const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: 1800, json: reviewer.family === "openai", ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
-            parsed = parseJsonReply<Verdictish>(r.text);
-            if (!parsed) note = "Reviewer reply was not valid JSON.";
-          } catch (e) {
-            note = `Reviewer unavailable: ${String(e).slice(0, 200)}`;
+          // Reasoning models spend part of the budget thinking, so OpenAI reviewers get room and low effort,
+          // and a reply that is not a verdict is asked for once more.
+          const openai = reviewer.family === "openai";
+          for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+            try {
+              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: openai ? 6000 : 1800, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
+              parsed = parseJsonReply<Verdictish>(r.text);
+              if (!parsed) note = "Reviewer reply was not valid JSON.";
+            } catch (e) {
+              note = `Reviewer unavailable: ${String(e).slice(0, 200)}`;
+            }
           }
           const verdict = (["approve", "changes", "block"].includes(String(parsed?.verdict)) ? parsed!.verdict : "comment") as Verdict;
           const findings = (parsed?.findings ?? []).slice(0, 20).map((f) => ({ path: f.path, line: f.line, severity: f.severity, text: String(f.text ?? "").slice(0, 600), cite: f.cite }));
@@ -177,6 +182,12 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
         }),
       ));
     }
+
+    // Reviewers that could not give a verdict never leave a contribution stuck: a person is asked.
+    await step.do("escalate if undecided", async () => {
+      const r = await objective.routing(id);
+      if (r.state === "needs-reviewers") await objective.openInbox({ id: `review-${id}`, kind: "review", target: id, reasons: ["Agent reviewers could not reach a verdict"] });
+    });
 
     // 3. Whatever the outcome, the frontier may have changed.
     await step.do("recompose", async () => {
