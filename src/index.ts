@@ -133,6 +133,7 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
       const adds = diff.paths.filter((x) => x.change === "add").map((x) => x.path);
       if (adds.length) { await objective.setAdds(c.id, adds); backfilled.push(c.id); }
     }
+    await objective.promoteOutcomes();
     return json({ backfilled, reviews: await ensureReviews(env, OBJECTIVE_ID) });
   }
 

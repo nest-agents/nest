@@ -512,11 +512,38 @@ export class ObjectiveDO extends DurableObject<Env> {
     } else if (routing.state === "approved" || routing.state === "changes" || routing.state === "blocked") {
       this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = ? WHERE id = ? AND status = 'open'", routing.state, inboxId);
     }
+    if (status !== c.status) this.promoteOutcomes(contributionId);
     return routing;
   }
 
+  /**
+   * Readiness follows reviews. An outcome composed while a member awaited review becomes ready when the
+   * last member is approved (its checks already passed), and drops back to waiting if one stops being.
+   */
+  promoteOutcomes(contributionId?: string): void {
+    const approved = new Set(this.sql.exec<Row>("SELECT id FROM contributions WHERE status = 'approved'").toArray().map((r) => String(r.id)));
+    for (const k of this.candidates()) {
+      if (!["waiting", "ready"].includes(k.status) || (contributionId && !k.order.includes(contributionId))) continue;
+      const allApproved = k.order.every((id) => approved.has(id));
+      const checksPass = k.checks.length > 0 && k.checks.every((x) => x.status === "PASS");
+      const next = allApproved && checksPass ? "ready" : "waiting";
+      if (next === k.status) continue;
+      this.sql.exec("UPDATE candidates SET status = ? WHERE id = ?", next, k.id);
+      if (next === "ready") {
+        this.openInbox({ id: `accept-${k.id}`, kind: "accept", target: k.id, reasons: [`${k.name} is ready to accept`] });
+        this.emit("Nest", "candidate", `${k.name} is ready: every contribution is approved and all checks passed`, { candidate: k.id, status: next });
+      } else {
+        this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'no longer ready' WHERE id = ? AND status = 'open'", `accept-${k.id}`);
+      }
+    }
+  }
+
   openInbox(item: { id: string; kind: string; target: string; reasons: string[] }) {
-    this.sql.exec("INSERT OR IGNORE INTO inbox VALUES (?, ?, ?, ?, 'open', ?, NULL)", item.id, item.kind, item.target, JSON.stringify(item.reasons), new Date().toISOString());
+    // A question asked again (an outcome ready again, a new conflict) reopens rather than staying resolved.
+    this.sql.exec(
+      "INSERT INTO inbox VALUES (?, ?, ?, ?, 'open', ?, NULL) ON CONFLICT(id) DO UPDATE SET status = 'open', resolution = NULL, reasons = excluded.reasons",
+      item.id, item.kind, item.target, JSON.stringify(item.reasons), new Date().toISOString(),
+    );
     this.emit("Durable Objects", "inbox", item.reasons.join("; "), { inbox: item.id, target: item.target });
   }
 
