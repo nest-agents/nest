@@ -12,7 +12,12 @@ export type ContributionNode = {
   seq: number;
   /** Paths this contribution creates. Two independent contributions that create the same path cannot compose. */
   adds?: string[];
+  /** The task it was written for. Commits of one task in one alternative group are one option, chosen together. */
+  task?: string;
 };
+
+/** Within an alternative group, an approach is everything one task contributed to it. */
+const optionOf = (n: ContributionNode) => n.task ?? n.id;
 
 /** Every contribution this one depends on, directly or not. */
 function ancestors(nodes: Map<string, ContributionNode>, id: string, seen = new Set<string>()): Set<string> {
@@ -94,16 +99,16 @@ export function closure(nodes: Map<string, ContributionNode>, selected: string[]
 
 /** One option per alternative group, and never a contribution together with the one it supersedes. */
 export function assertCompatible(nodes: Map<string, ContributionNode>, ids: Iterable<string>): void {
-  const groups = new Map<string, string>();
+  const groups = new Map<string, ContributionNode>();
   const set = new Set(ids);
   for (const id of set) {
     const n = nodes.get(id);
     if (!n) continue;
     if (n.alternative) {
       const prior = groups.get(n.alternative);
-      if (prior && prior !== id)
-        throw new GraphError("ALTERNATIVE_CONFLICT", `${prior} and ${id} are alternatives in ${n.alternative}`);
-      groups.set(n.alternative, id);
+      if (prior && optionOf(prior) !== optionOf(n))
+        throw new GraphError("ALTERNATIVE_CONFLICT", `${prior.id} and ${id} are alternatives in ${n.alternative}`);
+      groups.set(n.alternative, n);
     }
     if (n.supersedes && set.has(n.supersedes))
       throw new GraphError("SUPERSEDED_SELECTED", `${id} replaces ${n.supersedes}; select one`);
@@ -129,11 +134,16 @@ export function planFrontier(
   const locked = new Map<string, string>();
   for (const id of accepted) {
     const n = nodes.get(id);
-    if (n?.alternative) locked.set(n.alternative, id);
+    if (n?.alternative) locked.set(n.alternative, optionOf(n));
   }
+  // Each group lists its options; an option's representative is its earliest contribution.
   const groups = new Map<string, ContributionNode[]>();
-  for (const n of pool)
-    if (n.alternative && !locked.has(n.alternative)) groups.set(n.alternative, [...(groups.get(n.alternative) ?? []), n]);
+  for (const n of pool) {
+    if (!n.alternative || locked.has(n.alternative)) continue;
+    const opts = groups.get(n.alternative) ?? [];
+    if (!opts.some((o) => optionOf(o) === optionOf(n))) groups.set(n.alternative, [...opts, n]);
+    else groups.set(n.alternative, opts.map((o) => (optionOf(o) === optionOf(n) && n.seq < o.seq ? n : o)));
+  }
   // Overlaps among the remaining free contributions become implicit groups named after the shared file.
   const free = pool.filter((n) => !n.alternative).map((n) => n.id);
   const implicit = new Map<string, string>();
@@ -156,19 +166,31 @@ export function planFrontier(
     const chosen = new Set(Object.values(choice));
     const excluded = new Set(
       pool.filter((n) => {
-        const group = n.alternative ?? implicit.get(n.id);
-        if (!group) return false;
-        return n.alternative && locked.has(n.alternative) ? locked.get(n.alternative) !== n.id : !chosen.has(n.id);
+        if (n.alternative) {
+          const want = locked.get(n.alternative) ?? (choice[n.alternative] ? optionOf(nodes.get(choice[n.alternative]!)!) : undefined);
+          return want !== optionOf(n);
+        }
+        const group = implicit.get(n.id);
+        return group ? !chosen.has(n.id) : false;
       }).map((n) => n.id),
     );
     for (const id of replaced) excluded.add(id);
-    const usable = (id: string, trail: Set<string> = new Set()): boolean => {
+    // Memoized depth-first search. Shared ancestors (diamonds) are normal: every commit requires its
+    // whole authoring closure. Only an id still on the current path is a cycle.
+    const memo = new Map<string, boolean>();
+    const onPath = new Set<string>();
+    const usable = (id: string): boolean => {
       if (accepted.has(id)) return true;
-      if (excluded.has(id) || trail.has(id)) return false;
+      if (excluded.has(id) || onPath.has(id)) return false;
+      const known = memo.get(id);
+      if (known !== undefined) return known;
       const n = nodes.get(id);
       if (!n || n.status === "blocked" || n.status === "superseded") return false;
-      trail.add(id);
-      return n.requires.every((d) => usable(d, trail));
+      onPath.add(id);
+      const ok = n.requires.every((d) => usable(d));
+      onPath.delete(id);
+      memo.set(id, ok);
+      return ok;
     };
     const selected = pool.filter((n) => !excluded.has(n.id) && usable(n.id)).map((n) => n.id);
     if (!selected.length) continue;
@@ -184,13 +206,16 @@ export function planFrontier(
     out.push({ selected, order, choice, ready: order.every((id) => nodes.get(id)!.status === "approved") });
   }
   const approvedCount = (c: PlannedCandidate) => c.order.filter((id) => nodes.get(id)!.status === "approved").length;
-  // Ready first, then the most complete, then whichever chose earlier-published work.
+  // A fragment of another outcome is worth composing only after the whole outcomes are.
+  const sets = out.map((c) => new Set(c.order));
+  const maximal = new Map(out.map((c, i) => [c, !sets.some((t, j) => j !== i && t.size > sets[i]!.size && c.order.every((id) => t.has(id)))]));
+  // Whole outcomes first, then ready, then the most approved, then whichever chose earlier-published work.
   const seqs = (c: PlannedCandidate) => Object.keys(c.choice).sort().map((g) => nodes.get(c.choice[g]!)!.seq);
   const earlier = (a: number[], b: number[]) => {
     for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
     return a.length - b.length;
   };
   return out
-    .sort((a, b) => Number(b.ready) - Number(a.ready) || approvedCount(b) - approvedCount(a) || b.order.length - a.order.length || earlier(seqs(a), seqs(b)))
+    .sort((a, b) => Number(maximal.get(b)) - Number(maximal.get(a)) || Number(b.ready) - Number(a.ready) || approvedCount(b) - approvedCount(a) || b.order.length - a.order.length || earlier(seqs(a), seqs(b)))
     .slice(0, limit);
 }

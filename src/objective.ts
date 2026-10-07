@@ -509,13 +509,20 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   // ---------- candidates ----------
 
+  private graphNodes(): Map<string, ContributionNode> {
+    return new Map(this.contributions().map((c) => [c.id, {
+      id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined,
+      status: c.status, seq: c.seq, adds: c.adds, task: c.task ?? undefined,
+    }]));
+  }
+
   frontier(accepted: string[], limit = 6) {
-    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq, adds: c.adds }]));
+    const nodes = this.graphNodes();
     return planFrontier(nodes, new Set(accepted), limit);
   }
 
   closureOf(selected: string[], accepted: string[]): string[] {
-    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq, adds: c.adds }]));
+    const nodes = this.graphNodes();
     return closure(nodes, selected, new Set(accepted));
   }
 

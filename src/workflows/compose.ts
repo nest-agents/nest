@@ -32,8 +32,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       const planned = [];
       for (const f of frontier.slice(0, 3)) {
         const id = `k${(await sha256Hex(`${head.version}|${head.contextDigest}|${f.order.join(",")}`)).slice(0, 10)}`;
-        const chosen = Object.values(f.choice).map((cid) => byId.get(cid)?.title).filter(Boolean);
-        const name = chosen.length ? `Outcome: ${chosen.join(" + ")}` : f.order.length === 1 ? `Outcome: ${byId.get(f.order[0]!)?.title}` : "Combined outcome";
+        const name = outcomeName(f.order.map((cid) => byId.get(cid)!).filter(Boolean), Object.keys(f.choice).filter((g) => !g.startsWith("overlap:")).map((g) => byId.get(f.choice[g]!)!), state);
         const reusedAcross = f.order.filter((cid) => {
           const c = byId.get(cid);
           const chosenTasks = Object.values(f.choice).map((x) => byId.get(x)?.task);
@@ -143,6 +142,20 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     ));
     return { composed: plan.planned.length };
   }
+}
+
+/**
+ * Names an outcome the way a person would: the approach it takes and who built it, for example
+ * "Direct CSV export, by Heron and Wren". Without a chosen approach it falls back to the work itself.
+ */
+function outcomeName(members: { task: string | null; author: string; title: string }[], approaches: { task: string | null }[], state: { tasks: { id: string; title: string }[]; participants: { id: string; name: string }[] }): string {
+  const nameOf = (id: string) => state.participants.find((p) => p.id === id)?.name ?? id;
+  const authors = [...new Set(members.map((m) => nameOf(m.author)))].sort();
+  const by = authors.length > 1 ? `${authors.slice(0, -1).join(", ")} and ${authors.at(-1)}` : authors[0] ?? "nobody";
+  const approach = approaches.map((a) => state.tasks.find((t) => t.id === a.task)?.title).filter((t): t is string => !!t)
+    .map((t) => t.replace(/^(explore|try|build|add)\s+(an?|the)\s+/i, "")).map((t) => t[0]!.toUpperCase() + t.slice(1));
+  const what = approach.length ? approach.join(" with ") : members.length === 1 ? members[0]!.title : `${members.length} contributions`;
+  return `${what}, by ${by}`;
 }
 
 /** A failing or conflicting outcome becomes a task. The repair builds on the composed tree itself. */

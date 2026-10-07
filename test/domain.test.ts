@@ -114,6 +114,43 @@ describe("frontier", () => {
     expect(f).toHaveLength(1);
     expect(f[0]!.order).toEqual(["enc", "bg", "copy2"]);
   });
+  it("composes chains whose commits require their whole authoring closure (diamonds are not cycles)", () => {
+    // The shape of the second live run: each commit requires everything beneath it.
+    const g = graph(
+      C("enc", 1, { task: "t_direct", adds: ["src/csv.ts"] }),
+      C("build", 2, { task: "t_direct", requires: ["enc"], adds: ["src/export.ts"] }),
+      C("api", 3, { task: "t_direct", requires: ["enc", "build"], alternative: "strategy" }),
+      C("button", 4, { task: "t_direct", requires: ["enc", "build", "api"], adds: ["test/ui.test.ts"] }),
+    );
+    expect(planFrontier(g, new Set())[0]!.order).toEqual(["enc", "build", "api", "button"]);
+  });
+  it("treats one task's commits in an alternative group as one option, chosen together", () => {
+    const g = graph(
+      C("enc", 1, { task: "t_jobs" }),
+      C("store", 2, { task: "t_jobs", requires: ["enc"], alternative: "strategy" }),
+      C("route", 3, { task: "t_jobs", requires: ["enc", "store"], alternative: "strategy" }),
+      C("direct", 4, { task: "t_direct", alternative: "strategy" }),
+    );
+    const orders = planFrontier(g, new Set()).map((f) => f.order.join(","));
+    expect(orders).toContain("enc,store,route");
+    expect(orders).toContain("enc,direct");
+    expect(code(() => closure(g, ["route", "direct"]))).toBe("ALTERNATIVE_CONFLICT");
+    expect(code(() => closure(g, ["route"]))).toBe("OK");
+  });
+  it("picks one of several agents' copies of the same new file and keeps each chain whole", () => {
+    const g = graph(
+      C("k-enc", 1, { task: "t_jobs", adds: ["src/csv.ts"] }),
+      C("k-ui", 2, { task: "t_jobs", requires: ["k-enc"], adds: ["test/ui.test.ts"] }),
+      C("w-enc", 3, { task: "t_direct", adds: ["src/csv.ts"] }),
+      C("w-ui", 4, { task: "t_direct", requires: ["w-enc"], adds: ["test/ui.test.ts"] }),
+      C("h-ui", 5, { task: "t_ui", adds: ["test/ui.test.ts"] }),
+    );
+    const orders = planFrontier(g, new Set()).map((f) => f.order.join(","));
+    expect(orders).toContain("k-enc,k-ui");
+    expect(orders).toContain("w-enc,w-ui");
+    expect(orders).toContain("w-enc,h-ui");
+    expect(orders.every((o) => !(o.includes("k-enc") && o.includes("w-enc")))).toBe(true);
+  });
   it("marks an outcome not ready while a member awaits review", () => {
     const f = planFrontier(graph(C("a", 1), C("b", 2, { status: "proposed" })), new Set());
     expect(f[0]!.ready).toBe(false);
