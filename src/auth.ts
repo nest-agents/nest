@@ -52,7 +52,11 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
     if (parts.length === 5) {
       const [objective, generation, taskId, epochText, sig] = parts as [string, string, string, string, string];
       const expected = await hmac(env.NEST_SIGNING_KEY, `task:${objective}.${generation}.${taskId}.${epochText}`);
-      if (timingSafeEqual(sig, expected)) return { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) };
+      if (!timingSafeEqual(sig, expected)) return null;
+      // A token from before a reset names an older generation and is no longer valid.
+      const { objectiveStub } = await import("./names");
+      const current = await objectiveStub(env, objective).generation().catch(() => null);
+      return current === generation ? { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) } : null;
     }
     return null;
   }
