@@ -29,6 +29,7 @@ export async function startTask(env: Env, taskId: string, participantId: string,
   const repo = workspaceRepo(OBJECTIVE_ID, generation, taskId, epoch);
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const handover = t.status === "paused" && t.repo;
+  const handoverNote = handover ? t.pausedNote : null;
   const source = handover ? t.repo! : projectRepo(env);
   await artifacts.fork(source, repo, `Nest ${taskId} attempt ${epoch}`);
   await objective.startAttempt(taskId, participantId, t.epoch, repo);
@@ -45,7 +46,7 @@ export async function startTask(env: Env, taskId: string, participantId: string,
   }
   const workflow = taskWorkflowId(generation, taskId, epoch);
   try {
-    await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });
+    await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo, handover: handoverNote } });
   } catch (e) {
     // Never leave an attempt marked running without a workflow behind it.
     await objective.finishAttempt(taskId, epoch, "failed", `Could not start the workflow: ${String(e).slice(0, 200)}`);

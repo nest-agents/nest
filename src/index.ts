@@ -143,6 +143,25 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json({ workflow: id });
   }
 
+  if (route === "POST /api/admin/repos/prune") {
+    require(p, "owner");
+    const b = await body<{ prefix: string; dryRun?: boolean }>(request);
+    // Only workspace and swarm repositories, never the project or context repository.
+    if (!/^(swarm-[a-z0-9-]{1,30}\.|[a-z0-9-]+\.[0-9a-f]{8}--)/.test(b.prefix ?? "")) throw new HttpError(400, "BAD_PREFIX", "prefix must name a swarm or a workspace generation");
+    const names: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page++) {
+      const r = await env.ARTIFACTS.list({ limit: 100, cursor });
+      for (const repo of r.repos) if (repo.name.startsWith(b.prefix)) names.push(repo.name);
+      cursor = r.cursor;
+      if (!cursor) break;
+    }
+    if (b.dryRun) return json({ matched: names.length, sample: names.slice(0, 5) });
+    let deleted = 0;
+    for (let i = 0; i < names.length; i += 20) deleted += (await Promise.all(names.slice(i, i + 20).map((n) => env.ARTIFACTS.delete(n).catch(() => false)))).filter(Boolean).length;
+    return json({ matched: names.length, deleted });
+  }
+
   if (route === "POST /api/admin/computers/destroy") {
     require(p, "owner");
     const b = await body<{ names: string[] }>(request);

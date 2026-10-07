@@ -8,7 +8,8 @@ import { boundary, UNTRUSTED_RULE, wrapUntrusted } from "../untrusted";
 import { agentComputer, objectiveStub, parseWorkspaceRepo, projectRepo, projectStub, short } from "../names";
 import { buildPack } from "../packs";
 
-type Params = { objective: string; task: string; epoch: number; participant: string; repo: string };
+/** `handover` is the paused attempt's note, captured before the new attempt clears it from the task. */
+type Params = { objective: string; task: string; epoch: number; participant: string; repo: string; handover?: string | null };
 type Handover = { patch: string | null; head: string; notes: string[]; by: string };
 
 const REPO_DIR = "/workspace/repo";
@@ -66,7 +67,8 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       let handover: (Handover & { byName: string }) | null = null;
       if (epoch > 1) {
         const prev = (await objective.attempts(tid)).find((a) => Number(a.epoch) === epoch - 1);
-        const note = task.pausedNote ? (JSON.parse(task.pausedNote) as Handover) : null;
+        const saved = event.payload.handover ?? task.pausedNote;
+        const note = saved ? (JSON.parse(saved) as Handover) : null;
         if (prev && note) handover = { ...note, byName: state.participants.find((p) => p.id === String(prev.participant))?.name ?? String(prev.participant) };
       }
       const pack = await buildPack(env, tid, who.family === "anthropic" ? 300_000 : 200_000);
@@ -87,7 +89,10 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       }
       if (setup.handover?.patch) {
         const patch = await env.OBJECTS.get(setup.handover.patch);
-        if (patch) await computer.execWithInput(["git", "apply", "--index", "--whitespace=nowarn"], await patch.text(), REPO_DIR);
+        const applied = patch ? await computer.execWithInput(["git", "apply", "--index", "--whitespace=nowarn"], await patch.text(), REPO_DIR) : null;
+        await objective.log("R2", "handover", applied?.exitCode === 0
+          ? `Restored ${setup.handover.byName}'s uncommitted work as staged changes for ${setup.who.name}`
+          : `Could not restore ${setup.handover.byName}'s uncommitted work: ${applied?.stderr.slice(0, 200) ?? "patch missing"}`, { task: tid, epoch });
       }
       await computer.writeFile("/workspace/nest/context.md", setup.pack);
       await computer.writeFile("/workspace/nest/prompt.md", setup.prompt);
