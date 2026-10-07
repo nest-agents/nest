@@ -181,7 +181,7 @@ export class Computer extends DurableObject<Env> {
   /** Stop the agent at once and capture uncommitted work as a patch for whoever resumes. */
   async stopAgent(): Promise<{ uncommitted: string; head: string }> {
     if (!this.container.running) return { uncommitted: "", head: "" };
-    await this.sh(`pkill -KILL -f "codex|opencode" || true`, "/", 15);
+    await this.sh(`pkill -KILL -f "codex|opencode|nest-agent" || true`, "/", 15);
     const diff = await this.sh("git add -A && git diff --cached --binary", REPO_DIR, 30);
     const head = await this.sh("git rev-parse HEAD", REPO_DIR, 15);
     return { uncommitted: diff.stdout.slice(0, 500_000), head: head.stdout.trim() };

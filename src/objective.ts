@@ -568,10 +568,16 @@ export class ObjectiveDO extends DurableObject<Env> {
   }
 
   /** Owner-only, for rehearsals: forget all coordination state. Repositories in Artifacts are untouched. */
+  /**
+   * Owner-only, for rehearsals: forget coordination state. The spend ledger survives, so the cap can
+   * never be escaped by resetting. Repositories in Artifacts are untouched.
+   */
   async reset(): Promise<void> {
     for (const ws of this.ctx.getWebSockets()) ws.close(1012, "objective reset");
+    const spend = this.sql.exec<Row>("SELECT * FROM spend").toArray();
     await this.ctx.storage.deleteAll();
     this.schema();
+    for (const r of spend) this.sql.exec("INSERT OR IGNORE INTO spend VALUES (?, ?, ?, ?, ?, ?, ?)", r.id, r.task, r.model, r.reserved, r.actual, r.state, r.at);
   }
 
   // ---------- snapshot ----------

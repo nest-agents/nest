@@ -112,6 +112,19 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json(await env.OBJECTIVES.getByName(swarmStats[1]!).registrations());
   }
 
+  if (route === "POST /api/admin/computers/destroy") {
+    require(p, "owner");
+    const b = await body<{ names: string[] }>(request);
+    const names = (b.names ?? []).filter((n) => /^[a-z0-9_.-]{3,120}$/.test(n)).slice(0, 100);
+    const done = await Promise.all(names.map(async (n) => {
+      const c = env.COMPUTERS.getByName(n);
+      await c.stopAgent().catch(() => undefined);
+      await c.destroy("destroyed by the owner").catch(() => undefined);
+      return n;
+    }));
+    return json({ destroyed: done });
+  }
+
   if (route === "POST /api/admin/bootstrap") {
     require(p, "owner");
     return json(await bootstrap(env));

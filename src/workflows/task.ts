@@ -110,7 +110,17 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     let offset = 0;
     let paused = false;
+    const myGeneration = repo.split("--")[0]!.split(".")[1];
     for (let i = 0; i < 70; i++) {
+      // A reset starts a new generation; an attempt from an older one shuts itself down.
+      const stale = await step.do(`generation check ${i}`, async () => (await objective.generation().catch(() => null)) !== myGeneration);
+      if (stale) {
+        await step.do("stand down after a reset", async () => {
+          await computer.stopAgent().catch(() => undefined);
+          await computer.destroy("objective was reset").catch(() => undefined);
+        });
+        return { stale: true };
+      }
       try {
         await step.waitForEvent(`pause window ${i}`, { type: "pause", timeout: "30 seconds" });
         paused = true;
