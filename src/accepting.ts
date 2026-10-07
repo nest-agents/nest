@@ -59,7 +59,7 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
       await project.addNote({
         id, kind: "rejected", title: taskTitle(task), source: members[0]!.id,
         body: `In "${group}", ${taskTitle(task)} (${members.map((m) => `${short(m.id)} ${m.title}`).join("; ")}) was not chosen at checkpoint ${checkpoint.version}; ${taskTitle(winner?.task ?? null)} was. `
-          + `The person's reason: ${reason?.trim() || "none given"}. `
+          + `The person's reason: ${reason?.trim().replace(/[.\s]+$/, "") || "none given"}. `
           + (reasons.length ? `Reviews against it: ${reasons.join(" ")}` : "Its reviews did not object."),
       });
       await objective.log("Artifacts", "note", `Recorded why ${taskTitle(task)} was not chosen`, { note: id });

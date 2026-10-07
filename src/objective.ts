@@ -645,6 +645,9 @@ export class ObjectiveDO extends DurableObject<Env> {
       for (const p of x.adds) owner.set(p, x.id);
       if (x.alternative) chosen.set(x.alternative, x.task);
     }
+    // A task that explored a losing approach lost as a whole, however its agent tagged each commit.
+    const losingTasks = new Map<string, string>();
+    for (const x of all) if (x.alternative && x.task && chosen.has(x.alternative) && chosen.get(x.alternative) !== x.task) losingTasks.set(x.task, x.alternative);
     const retire = (x: Contribution, reason: string) => {
       this.sql.exec("UPDATE contributions SET status = 'superseded', flags = ? WHERE id = ?", JSON.stringify([...new Set([...x.flags, reason])]), x.id);
       this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'retired' WHERE target = ? AND status = 'open'", x.id);
@@ -652,8 +655,9 @@ export class ObjectiveDO extends DurableObject<Env> {
     };
     for (const x of all) {
       if (["accepted", "superseded", "blocked"].includes(x.status)) continue;
-      if (x.alternative && chosen.has(x.alternative) && chosen.get(x.alternative) !== x.task) {
-        retire(x, `Its approach in "${x.alternative}" was not chosen at checkpoint ${checkpoint.version}`);
+      const lost = x.task ? losingTasks.get(x.task) : undefined;
+      if (lost) {
+        retire(x, `Its task's approach in "${lost}" was not chosen at checkpoint ${checkpoint.version}`);
         continue;
       }
       const clash = x.adds.find((p) => owner.has(p));

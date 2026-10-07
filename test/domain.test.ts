@@ -182,6 +182,15 @@ describe("frontier", () => {
     expect(orders).toContain("enc,api2");
     expect(orders.every((o) => !(o.includes("api,") || o.endsWith(",api")) || !o.includes("api2"))).toBe(true);
   });
+  it("drops every commit of a task whose approach lost, even ones its agent did not tag", () => {
+    const g = graph(
+      C("jobs-api", 1, { task: "t_jobs", alternative: "strategy", status: "accepted" }),
+      C("direct-api", 2, { task: "t_direct" }),
+      C("direct-cache", 3, { task: "t_direct", requires: ["direct-api"], alternative: "strategy" }),
+      C("ui", 4, { task: "t_ui" }),
+    );
+    expect(planFrontier(g, new Set(["jobs-api"])).map((f) => f.order.join(","))).toEqual(["ui"]);
+  });
   it("marks an outcome not ready while a member awaits review", () => {
     const f = planFrontier(graph(C("a", 1), C("b", 2, { status: "proposed" })), new Set());
     expect(f[0]!.ready).toBe(false);

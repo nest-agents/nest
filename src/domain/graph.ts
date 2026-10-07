@@ -135,7 +135,11 @@ export function planFrontier(
   const replaced = new Set(live.filter((n) => n.status === "approved" || nodes.get(n.supersedes ?? "")?.status === "superseded").map((n) => n.supersedes).filter((x): x is string => !!x));
   // A file the checkpoint already has cannot be created again: such work can never apply.
   const settled = new Set([...nodes.values()].filter((n) => accepted.has(n.id) || n.status === "accepted").flatMap((n) => n.adds ?? []));
-  const dead = new Set(live.filter((n) => (n.adds ?? []).some((p) => settled.has(p))).map((n) => n.id));
+  // Once a group is decided, every task that explored a losing option lost as a whole, tagged or not.
+  const decided = new Map<string, string>();
+  for (const n of nodes.values()) if ((accepted.has(n.id) || n.status === "accepted") && n.alternative) decided.set(n.alternative, optionOf(n));
+  const losingTasks = new Set([...nodes.values()].filter((n) => n.alternative && n.task && decided.has(n.alternative) && decided.get(n.alternative) !== optionOf(n)).map((n) => n.task!));
+  const dead = new Set(live.filter((n) => (n.adds ?? []).some((p) => settled.has(p)) || (n.task && losingTasks.has(n.task))).map((n) => n.id));
   const pool = live.filter((n) => !replaced.has(n.id) && !dead.has(n.id));
   const locked = new Map<string, string>();
   for (const id of accepted) {
