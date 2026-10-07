@@ -47,7 +47,7 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
   // later agents start informed. An approach is everything one task contributed to the group.
   const taskTitle = (id: string | null) => state.tasks.find((t) => t.id === id)?.title ?? id ?? "untasked work";
   for (const [group, chosenId] of Object.entries(c.choice)) {
-    if (group.startsWith("overlap:")) continue;
+    if (/^(overlap|replace):/.test(group)) continue; // implicit choices, not approaches
     const winner = state.contributions.find((x) => x.id === chosenId);
     const losers = new Map<string, typeof state.contributions>();
     for (const x of state.contributions.filter((x) => x.alternative === group && x.task !== winner?.task))

@@ -33,7 +33,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       const planned = [];
       for (const f of frontier.slice(0, 3)) {
         const id = `k${(await sha256Hex(`${head.version}|${head.contextDigest}|${f.order.join(",")}`)).slice(0, 10)}`;
-        const name = outcomeName(f.order.map((cid) => byId.get(cid)!).filter(Boolean), Object.keys(f.choice).filter((g) => !g.startsWith("overlap:")).map((g) => byId.get(f.choice[g]!)!), state);
+        const name = outcomeName(f.order.map((cid) => byId.get(cid)!).filter(Boolean), Object.keys(f.choice).filter((g) => !/^(overlap|replace):/.test(g)).map((g) => byId.get(f.choice[g]!)!), state);
         const reusedAcross = f.order.filter((cid) => {
           const c = byId.get(cid);
           const chosenTasks = Object.values(f.choice).map((x) => byId.get(x)?.task);
@@ -184,7 +184,10 @@ function outcomeName(members: { task: string | null; author: string; title: stri
   const by = authors.length > 1 ? `${authors.slice(0, -1).join(", ")} and ${authors.at(-1)}` : authors[0] ?? "nobody";
   const approach = approaches.map((a) => state.tasks.find((t) => t.id === a.task)?.title).filter((t): t is string => !!t)
     .map((t) => t.replace(/^(explore|try|build|add)\s+(an?|the)\s+/i, "")).map((t) => t[0]!.toUpperCase() + t.slice(1));
-  const what = approach.length ? approach.join(" with ") : members.length === 1 ? members[0]!.title : `${members.length} contributions`;
+  // Without a chosen approach, name the features: the tasks the work was written for, minus repairs.
+  const features = [...new Set(members.filter((m) => m.task && !/^t_(repair|reconcile)-/.test(m.task)).map((m) => state.tasks.find((t) => t.id === m.task)?.title).filter((t): t is string => !!t))];
+  const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)!.toLowerCase()}` : xs[0]!);
+  const what = approach.length ? approach.join(" with ") : features.length ? list(features) : members.length === 1 ? members[0]!.title : `${members.length} contributions`;
   return `${what}, by ${by}`;
 }
 

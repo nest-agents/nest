@@ -511,8 +511,8 @@ document.addEventListener("click", (e) => {
     const c = S.candidates.find((x) => x.id === t.dataset.accept);
     const stale = c.order.map((id) => S.contributions.find((x) => x.id === id)).filter((x) => x && isStale(x));
     // Approaches this acceptance turns down: the person's reason is recorded with them for later agents.
-    const chosenTasks = new Set(Object.entries(c.choice ?? {}).filter(([g]) => !g.startsWith("overlap:")).map(([, id]) => S.contributions.find((x) => x.id === id)?.task));
-    const groups = new Set(Object.keys(c.choice ?? {}).filter((g) => !g.startsWith("overlap:")));
+    const chosenTasks = new Set(Object.entries(c.choice ?? {}).filter(([g]) => !/^(overlap|replace):/.test(g)).map(([, id]) => S.contributions.find((x) => x.id === id)?.task));
+    const groups = new Set(Object.keys(c.choice ?? {}).filter((g) => !/^(overlap|replace):/.test(g)));
     const losing = [...new Set(S.contributions.filter((x) => x.alternative && groups.has(x.alternative) && !chosenTasks.has(x.task)).map((x) => x.task))]
       .map((id) => S.tasks.find((t) => t.id === id)?.title).filter(Boolean);
     if (stale.length || losing.length) {
