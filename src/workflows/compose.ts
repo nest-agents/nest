@@ -49,8 +49,6 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       };
     });
 
-    if (!plan.planned.length) return { composed: 0 };
-
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
     // unfinished; one that fails a check the checkpoint passes has broken something.
     // The key names the check set too, so adding a check re-measures the checkpoint.
@@ -85,6 +83,22 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       }
     });
     const passingAtHead = new Set(baseline.filter((k) => k.status === "PASS").map((k) => k.id));
+
+    // A context change can make the accepted checkpoint itself fall short: what passed when it was accepted
+    // fails under the new requirements. That is a regression of the head, repaired from the head's own tree.
+    await step.do(`regressions of checkpoint ${plan.head.version}`, async () => {
+      const state = await objective.state();
+      const accepted = state.candidates.find((x) => x.status === "accepted" && x.commit === plan.head.commit);
+      if (!accepted || !baseline.length) return { regressed: [] };
+      const regressed = baseline.filter((k) => k.status !== "PASS" && accepted.checks.some((a) => a.id === k.id && a.status === "PASS"));
+      if (regressed.length)
+        await openRepair(this.env, objective, `h${plan.head.commit.slice(0, 10)}`, `checkpoint ${plan.head.version}`,
+          `${event.payload.reason ? `After ${event.payload.reason}, ` : ""}checks that passed when it was accepted now fail:\n${regressed.map((f) => `${f.id}: ${f.detail}`).join("\n")}`,
+          plan.head.commit, plan.head.version);
+      return { regressed: regressed.map((k) => k.id) };
+    });
+
+    if (!plan.planned.length) return { composed: 0 };
 
     await Promise.all(plan.planned.map((c) =>
       step.do(`compose ${c.id}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" }, async () => {
@@ -176,7 +190,7 @@ async function openRepair(env: Env, objective: DurableObjectStub<import("../obje
   if (existing) return;
   await objective.createTask({
     id, title: `Repair ${name.replace(/^Outcome: /, "")}`, baseVersion, baseCommit,
-    brief: `The composed outcome ${candidateId} fails:\n${detail}\n\nYour workspace starts from that exact composed tree. Make the smallest change that makes the outcome satisfy the current requirements, run the tests, commit with the Nest trailers and publish.`,
+    brief: `${candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`} fails:\n${detail}\n\nYour workspace starts from that exact tree. Make the smallest change that makes it satisfy the current requirements, run the tests, commit with the Nest trailers and publish.`,
   });
   // One automatic repair at a time: a cascade is impossible whatever else goes wrong.
   if (env.AUTO_REPAIR_AGENT && !(await objective.repairRunning())) {

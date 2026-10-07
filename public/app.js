@@ -495,12 +495,23 @@ document.addEventListener("click", (e) => {
   if (t.dataset.accept) {
     const c = S.candidates.find((x) => x.id === t.dataset.accept);
     const stale = c.order.map((id) => S.contributions.find((x) => x.id === id)).filter((x) => x && isStale(x));
-    if (stale.length) {
-      return modal(`<form class="form" id="cr"><h3>Review the old context first</h3><p>${stale.length} contributions in this outcome were written against an older version of a requirement. Say why the outcome still meets the current one; it is recorded with the acceptance.</p>
-        <div class="field"><label for="cr-t">Context review</label><textarea id="cr-t" required minlength="12"></textarea></div><div class="row"><button class="btn small primary" type="submit">Accept checkpoint ${S.head.version + 1}</button></div></form>`, (root, close) => {
+    // Approaches this acceptance turns down: the person's reason is recorded with them for later agents.
+    const chosenTasks = new Set(Object.entries(c.choice ?? {}).filter(([g]) => !g.startsWith("overlap:")).map(([, id]) => S.contributions.find((x) => x.id === id)?.task));
+    const groups = new Set(Object.keys(c.choice ?? {}).filter((g) => !g.startsWith("overlap:")));
+    const losing = [...new Set(S.contributions.filter((x) => x.alternative && groups.has(x.alternative) && !chosenTasks.has(x.task)).map((x) => x.task))]
+      .map((id) => S.tasks.find((t) => t.id === id)?.title).filter(Boolean);
+    if (stale.length || losing.length) {
+      return modal(`<form class="form" id="cr"><h3>Accept checkpoint ${S.head.version + 1}</h3>
+        ${losing.length ? `<p>This turns down ${losing.map(esc).join(" and ")}. Say why; every later agent's context pack carries your reason.</p>
+        <div class="field"><label for="cr-why">Why this approach</label><textarea id="cr-why" required minlength="12"></textarea></div>` : ""}
+        ${stale.length ? `<p>${stale.length} contributions in this outcome were written against an older version of a requirement. Say why the outcome still meets the current one.</p>
+        <div class="field"><label for="cr-t">Context review</label><textarea id="cr-t" required minlength="12"></textarea></div>` : ""}
+        <div class="row"><button class="btn small primary" type="submit">Accept checkpoint ${S.head.version + 1}</button></div></form>`, (root, close) => {
         root.querySelector("#cr").onsubmit = (ev) => {
           ev.preventDefault();
-          act(async () => { await api(`/api/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version, contextReview: root.querySelector("#cr-t").value }) }); close(); }, "Accepted");
+          const reason = root.querySelector("#cr-why")?.value ?? null;
+          const contextReview = root.querySelector("#cr-t")?.value ?? null;
+          act(async () => { await api(`/api/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version, contextReview, reason }) }); close(); }, "Accepted");
         };
       });
     }

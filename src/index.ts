@@ -283,8 +283,8 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
   const accept = /^\/api\/candidates\/([a-z0-9-]{4,64})\/accept$/.exec(url.pathname);
   if (accept && request.method === "POST") {
     require(p, "owner");
-    const b = await body<{ expectedVersion: number; contextReview?: string }>(request);
-    return json(await acceptCandidate(env, accept[1]!, b.expectedVersion, b.contextReview ?? null));
+    const b = await body<{ expectedVersion: number; contextReview?: string; reason?: string }>(request);
+    return json(await acceptCandidate(env, accept[1]!, b.expectedVersion, b.contextReview ?? null, b.reason ? String(b.reason).slice(0, 2000) : null));
   }
 
   throw new HttpError(404, "NOT_FOUND");

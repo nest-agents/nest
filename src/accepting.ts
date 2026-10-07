@@ -11,7 +11,7 @@ export class AcceptError extends Error {
   }
 }
 
-export async function acceptCandidate(env: Env, candidateId: string, expectedVersion: number, contextReview: string | null) {
+export async function acceptCandidate(env: Env, candidateId: string, expectedVersion: number, contextReview: string | null, reason: string | null = null) {
   const project = projectStub(env);
   const objective = objectiveStub(env);
   const head = await project.head();
@@ -38,20 +38,31 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
 
   const checkpoint = await project.advance(
     { version: expectedVersion, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
-    c.commit, candidateId, contextReview?.trim() || `Accepted ${c.name}`,
+    c.commit, candidateId, reason?.trim() || contextReview?.trim() || `Accepted ${c.name}`,
   );
   await objective.markAccepted(candidateId, checkpoint);
   await objective.log("Durable Objects", "accept", `Compare-and-swap moved the project head from checkpoint ${head.version} to ${checkpoint.version}`, { candidate: candidateId, checkpoint: checkpoint.version });
 
-  // Every alternative that lost becomes a note with its reason, so later agents start informed.
-  for (const [group, chosen] of Object.entries(c.choice)) {
-    for (const loser of state.contributions.filter((x) => x.alternative === group && x.id !== chosen)) {
-      const reasons = state.reviews.filter((r) => r.target === loser.id && !r.triage && r.verdict !== "approve").map((r) => r.summary).filter(Boolean);
+  // Every approach that lost becomes one note with the person's reason and the reviews against it, so
+  // later agents start informed. An approach is everything one task contributed to the group.
+  const taskTitle = (id: string | null) => state.tasks.find((t) => t.id === id)?.title ?? id ?? "untasked work";
+  for (const [group, chosenId] of Object.entries(c.choice)) {
+    if (group.startsWith("overlap:")) continue;
+    const winner = state.contributions.find((x) => x.id === chosenId);
+    const losers = new Map<string, typeof state.contributions>();
+    for (const x of state.contributions.filter((x) => x.alternative === group && x.task !== winner?.task))
+      losers.set(x.task ?? x.id, [...(losers.get(x.task ?? x.id) ?? []), x]);
+    for (const [task, members] of losers) {
+      const ids = new Set(members.map((m) => m.id));
+      const reasons = state.reviews.filter((r) => ids.has(r.target) && !r.triage && r.verdict !== "approve").map((r) => `${r.reviewer}: ${r.summary}`).filter(Boolean);
+      const id = `rej/${group}-${task}`;
       await project.addNote({
-        id: `rej/${group}-${short(loser.id)}`, kind: "rejected", title: loser.title, source: loser.id,
-        body: `In group "${group}", ${short(loser.id)} "${loser.title}" was not chosen at checkpoint ${checkpoint.version}; ${short(chosen)} was. ${reasons.length ? `Reviews against it: ${reasons.join(" ")}` : "Its reviews did not object; it lost on the person's choice."}`,
+        id, kind: "rejected", title: taskTitle(task), source: members[0]!.id,
+        body: `In "${group}", ${taskTitle(task)} (${members.map((m) => `${short(m.id)} ${m.title}`).join("; ")}) was not chosen at checkpoint ${checkpoint.version}; ${taskTitle(winner?.task ?? null)} was. `
+          + `The person's reason: ${reason?.trim() || "none given"}. `
+          + (reasons.length ? `Reviews against it: ${reasons.join(" ")}` : "Its reviews did not object."),
       });
-      await objective.log("Artifacts", "note", `Recorded why ${short(loser.id)} ${loser.title} was not chosen`, { note: `rej/${group}-${short(loser.id)}` });
+      await objective.log("Artifacts", "note", `Recorded why ${taskTitle(task)} was not chosen`, { note: id });
     }
   }
 
