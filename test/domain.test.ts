@@ -151,6 +151,15 @@ describe("frontier", () => {
     expect(orders).toContain("w-enc,h-ui");
     expect(orders.every((o) => !(o.includes("k-enc") && o.includes("w-enc")))).toBe(true);
   });
+  it("drops work that creates a file the checkpoint already has, and everything built on it", () => {
+    const g = graph(
+      C("w-enc", 1, { status: "accepted", adds: ["src/csv.ts"] }),
+      C("k-enc", 2, { adds: ["src/csv.ts"] }),
+      C("k-build", 3, { requires: ["k-enc"], adds: ["src/export.ts"] }),
+      C("fix", 4, { requires: [] }),
+    );
+    expect(planFrontier(g, new Set(["w-enc"])).map((f) => f.order.join(","))).toEqual(["fix"]);
+  });
   it("marks an outcome not ready while a member awaits review", () => {
     const f = planFrontier(graph(C("a", 1), C("b", 2, { status: "proposed" })), new Set());
     expect(f[0]!.ready).toBe(false);

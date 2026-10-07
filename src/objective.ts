@@ -564,9 +564,24 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       for (const id of contributionIds) this.sql.exec("UPDATE contributions SET status = 'accepted' WHERE id = ?", id);
       this.sql.exec("UPDATE candidates SET status = 'accepted' WHERE id = ?", candidateId);
-      this.sql.exec("UPDATE candidates SET status = 'superseded' WHERE id != ? AND status NOT IN ('accepted', 'failing', 'conflict')", candidateId);
-      this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'accepted' WHERE target = ? AND status = 'open'", candidateId);
+      // Every other outcome was built on the old checkpoint, so none of them can be accepted any more.
+      const stale = this.sql.exec<Row>("SELECT id FROM candidates WHERE id != ? AND status NOT IN ('accepted', 'superseded')", candidateId).toArray().map((r) => String(r.id));
+      this.sql.exec("UPDATE candidates SET status = 'superseded' WHERE id != ? AND status NOT IN ('accepted', 'superseded')", candidateId);
+      for (const id of [candidateId, ...stale]) this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'accepted' WHERE target = ? AND status = 'open'", id);
     });
+    // Work that creates a file the checkpoint now has from someone else can never apply: retire it with the reason.
+    const all = this.contributions();
+    const owner = new Map<string, string>();
+    for (const x of all) if (x.status === "accepted") for (const p of x.adds) owner.set(p, x.id);
+    for (const x of all) {
+      if (["accepted", "superseded", "blocked"].includes(x.status)) continue;
+      const clash = x.adds.find((p) => owner.has(p));
+      if (!clash) continue;
+      const by = all.find((y) => y.id === owner.get(clash))!;
+      const reason = `Checkpoint ${checkpoint.version} already has ${clash} from ${this.participant(by.author)?.name ?? by.author}'s ${by.title}`;
+      this.sql.exec("UPDATE contributions SET status = 'superseded', flags = ? WHERE id = ?", JSON.stringify([...new Set([...x.flags, reason])]), x.id);
+      this.emit("Nest", "retired", `Retired ${x.title} by ${this.participant(x.author)?.name ?? x.author}: ${reason}`, { contribution: x.id });
+    }
   }
 
   markCandidatesOutdated(ids: string[]) {

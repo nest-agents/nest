@@ -130,7 +130,10 @@ export function planFrontier(
     (n) => !accepted.has(n.id) && n.status !== "blocked" && n.status !== "superseded" && n.status !== "accepted",
   );
   const replaced = new Set(live.map((n) => n.supersedes).filter((x): x is string => !!x));
-  const pool = live.filter((n) => !replaced.has(n.id));
+  // A file the checkpoint already has cannot be created again: such work can never apply.
+  const settled = new Set([...nodes.values()].filter((n) => accepted.has(n.id) || n.status === "accepted").flatMap((n) => n.adds ?? []));
+  const dead = new Set(live.filter((n) => (n.adds ?? []).some((p) => settled.has(p))).map((n) => n.id));
+  const pool = live.filter((n) => !replaced.has(n.id) && !dead.has(n.id));
   const locked = new Map<string, string>();
   for (const id of accepted) {
     const n = nodes.get(id);
@@ -174,7 +177,7 @@ export function planFrontier(
         return group ? !chosen.has(n.id) : false;
       }).map((n) => n.id),
     );
-    for (const id of replaced) excluded.add(id);
+    for (const id of [...replaced, ...dead]) excluded.add(id);
     // Memoized depth-first search. Shared ancestors (diamonds) are normal: every commit requires its
     // whole authoring closure. Only an id still on the current path is a cycle.
     const memo = new Map<string, boolean>();
