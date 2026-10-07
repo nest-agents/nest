@@ -113,7 +113,11 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
     const myGeneration = parseWorkspaceRepo(repo)?.generation;
     for (let i = 0; i < 70; i++) {
       // A reset starts a new generation; an attempt from an older one shuts itself down.
-      const stale = await step.do(`generation check ${i}`, async () => (await objective.generation().catch(() => null)) !== myGeneration);
+      // Only a definite different generation stands down; a failed read (for example during a deploy) does not.
+      const stale = await step.do(`generation check ${i}`, async () => {
+        const current = await objective.generation().catch(() => null);
+        return current !== null && current !== myGeneration;
+      });
       if (stale) {
         await step.do("stand down after a reset", async () => {
           await computer.stopAgent().catch(() => undefined);

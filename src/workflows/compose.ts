@@ -54,7 +54,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
     // unfinished; one that fails a check the checkpoint passes has broken something.
     const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}`;
-    const baseline = await step.do(`measure checkpoint ${plan.head.version}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" }, async () => {
+    // Generous retries: right after a deploy, Durable Objects can run the previous code for a minute or more.
+    const baseline = await step.do(`measure checkpoint ${plan.head.version}`, { retries: { limit: 5, delay: "20 seconds", backoff: "linear" }, timeout: "10 minutes" }, async () => {
       const known = await objective.baseline(baselineKey);
       if (known) return known;
       const id = `base-${plan.head.version}-${plan.head.commit.slice(0, 10)}-${plan.head.contextDigest.slice(0, 6)}`;
