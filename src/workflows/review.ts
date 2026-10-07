@@ -104,7 +104,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
     }
 
     const spend = {
-      reserve: (rid: string, micro: number) => objective.reserveSpend(rid, null, "review", micro, Number(this.env.SPEND_CAP_MICRO_USD)),
+      reserve: (rid: string, micro: number, model: string) => objective.reserveSpend(rid, null, model, micro, Number(this.env.SPEND_CAP_MICRO_USD)),
       settle: (rid: string, micro: number) => objective.settleSpend(rid, micro),
     };
 

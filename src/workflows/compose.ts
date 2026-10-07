@@ -75,7 +75,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         if (!result.ok) {
           const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
           await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${result.detail}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
-          await openRepair(this.env, objective, c.id, c.name, detail, null, plan.head.version);
+          // A real overlap is a choice for a person, not a bug for an agent to rewrite.
+          await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
           return { conflict: result.at };
         }
         await objective.recordMaterialization(result.commit, c.order);
@@ -112,7 +113,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 }
 
 /** A failing or conflicting outcome becomes a task. The repair builds on the composed tree itself. */
-async function openRepair(env: Env, objective: DurableObjectStub<import("../objective").ObjectiveDO>, candidateId: string, name: string, detail: string, baseCommit: string | null, baseVersion: number) {
+async function openRepair(env: Env, objective: DurableObjectStub<import("../objective").ObjectiveDO>, candidateId: string, name: string, detail: string, baseCommit: string, baseVersion: number) {
   const id = `t_repair-${candidateId.slice(1, 9)}`;
   const existing = await objective.task(id);
   if (existing) return;
@@ -120,7 +121,8 @@ async function openRepair(env: Env, objective: DurableObjectStub<import("../obje
     id, title: `Repair ${name.replace(/^Outcome: /, "")}`, baseVersion, baseCommit,
     brief: `The composed outcome ${candidateId} fails:\n${detail}\n\nYour workspace starts from that exact composed tree. Make the smallest change that makes the outcome satisfy the current requirements, run the tests, commit with the Nest trailers and publish.`,
   });
-  if (env.AUTO_REPAIR_AGENT) {
+  // One automatic repair at a time: a cascade is impossible whatever else goes wrong.
+  if (env.AUTO_REPAIR_AGENT && !(await objective.repairRunning())) {
     const { startTask } = await import("../tasks");
     await startTask(env, id, env.AUTO_REPAIR_AGENT, "agent").catch((e) => objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`));
   }

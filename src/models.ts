@@ -49,12 +49,12 @@ export async function chat(
   env: Env,
   route: { provider: "openai" | "openrouter" | "workers-ai"; model: string },
   messages: ChatMessage[],
-  opts: { maxTokens?: number; json?: boolean; metadata?: Record<string, string>; reserve: (id: string, micro: number) => Promise<boolean>; settle: (id: string, micro: number) => Promise<void> },
+  opts: { maxTokens?: number; json?: boolean; metadata?: Record<string, string>; reserve: (id: string, micro: number, model: string) => Promise<boolean>; settle: (id: string, micro: number) => Promise<void> },
 ): Promise<ChatResult> {
   const maxTokens = opts.maxTokens ?? 2000;
   const promptTokens = Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
   const id = `chat-${crypto.randomUUID()}`;
-  if (!(await opts.reserve(id, estimateCost(route.model, promptTokens, maxTokens)))) throw new Error("SPEND_CAP_REACHED");
+  if (!(await opts.reserve(id, estimateCost(route.model, promptTokens, maxTokens), route.model))) throw new Error("SPEND_CAP_REACHED");
 
   if (route.provider === "workers-ai") {
     const options = (env.AI_GATEWAY_MODE as string) === "gateway" ? { gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} } } : {};

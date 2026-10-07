@@ -17,7 +17,7 @@ export type Contribution = {
   id: string; seq: number; task: string | null; epoch: number; author: string; repo: string; commit: string; parent: string;
   title: string; message: string; alternative: string | null; supersedes: string | null; status: ContributionStatus;
   paths: string[]; special: boolean; requires: string[]; declared: string[]; cites: Citation[]; assumes: string[]; createdAt: string;
-  flags: string[];
+  flags: string[]; adds: string[];
 };
 export type Review = {
   id: string; target: string; reviewer: string; kind: ParticipantKind; family: string; verdict: Verdict; confidence: number;
@@ -60,7 +60,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS contributions(id TEXT PRIMARY KEY, seq INTEGER NOT NULL, task TEXT, epoch INTEGER NOT NULL, author TEXT NOT NULL,
         repo TEXT NOT NULL, commit_sha TEXT NOT NULL, parent TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, alternative TEXT,
         supersedes TEXT, status TEXT NOT NULL, paths TEXT NOT NULL, special INTEGER NOT NULL, declared TEXT NOT NULL, assumes TEXT NOT NULL, created_at TEXT NOT NULL,
-        flags TEXT NOT NULL DEFAULT '[]');
+        flags TEXT NOT NULL DEFAULT '[]', adds TEXT NOT NULL DEFAULT '[]');
       CREATE INDEX IF NOT EXISTS contributions_commit ON contributions(commit_sha);
       CREATE TABLE IF NOT EXISTS deps(contribution TEXT NOT NULL, requires TEXT NOT NULL, PRIMARY KEY(contribution, requires));
       CREATE TABLE IF NOT EXISTS citations(source TEXT NOT NULL, source_kind TEXT NOT NULL, item TEXT NOT NULL, version INTEGER NOT NULL, lines TEXT,
@@ -144,7 +144,13 @@ export class ObjectiveDO extends DurableObject<Env> {
     return g;
   }
 
-  init(input: { id: string; title: string; criteria: string[]; project: string; policy?: ReviewPolicy }): { id: string; title: string } {
+  /** Swarm objectives measure throughput: no reviews or composition are started for their contributions. */
+  isSwarm(): boolean {
+    return this.meta("mode") === "swarm";
+  }
+
+  init(input: { id: string; title: string; criteria: string[]; project: string; policy?: ReviewPolicy; mode?: "swarm" }): { id: string; title: string } {
+    if (input.mode) this.setMeta("mode", input.mode);
     if (!this.meta("generation")) this.setMeta("generation", crypto.randomUUID().replaceAll("-", "").slice(0, 8));
     if (!this.meta("objective")) {
       this.setMeta("objective", input.id);
@@ -245,6 +251,16 @@ export class ObjectiveDO extends DurableObject<Env> {
     return this.task(taskId)!;
   }
 
+  /** Contributions registered by one attempt, however they were published. */
+  attemptContributions(taskId: string, epoch: number): number {
+    return Number(this.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM contributions WHERE task = ? AND epoch = ?", taskId, epoch).one().n);
+  }
+
+  /** True while any repair task is running, so automatic repairs never stack. */
+  repairRunning(): boolean {
+    return !!this.sql.exec<Row>("SELECT 1 FROM tasks WHERE id LIKE 't_repair-%' AND status = 'running' LIMIT 1").toArray()[0];
+  }
+
   finishAttempt(taskId: string, epoch: number, outcome: "done" | "failed", detail: string): Task {
     const t = this.task(taskId);
     if (!t) throw new ObjectiveError("NOT_FOUND");
@@ -261,6 +277,12 @@ export class ObjectiveDO extends DurableObject<Env> {
     const r = this.sql.exec<Row>("SELECT a.task, a.epoch, a.participant, t.epoch AS cur, t.status FROM attempts a JOIN tasks t ON t.id = a.task WHERE a.repo = ?", repo).toArray()[0];
     if (!r) return null;
     return { task: String(r.task), epoch: Number(r.epoch), participant: String(r.participant), current: Number(r.cur) === Number(r.epoch) && String(r.status) === "running" };
+  }
+
+  /** Registered contributions with their creation times, for throughput measurement. */
+  registrations(): { id: string; task: string | null; createdAt: string }[] {
+    return this.sql.exec<Row>("SELECT id, task, created_at FROM contributions ORDER BY seq").toArray()
+      .map((r) => ({ id: String(r.id), task: r.task ? String(r.task) : null, createdAt: String(r.created_at) }));
   }
 
   attempts(taskId: string) {
@@ -296,9 +318,9 @@ export class ObjectiveDO extends DurableObject<Env> {
     const now = new Date().toISOString();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        "INSERT INTO contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, '[]')",
+        "INSERT INTO contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, '[]', ?)",
         c.id, seq, c.task, c.epoch, c.author, c.repo, c.commit, c.parent, c.title, c.message, c.alternative, c.supersedes,
-        JSON.stringify(c.paths), c.special ? 1 : 0, JSON.stringify(c.declared), JSON.stringify(c.assumes), now,
+        JSON.stringify(c.paths), c.special ? 1 : 0, JSON.stringify(c.declared), JSON.stringify(c.assumes), now, JSON.stringify(c.adds ?? []),
       );
       for (const d of c.requires) this.sql.exec("INSERT OR IGNORE INTO deps VALUES (?, ?)", c.id, d);
       for (const cite of c.cites)
@@ -340,7 +362,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       declared: JSON.parse(String(r.declared)),
       cites: this.sql.exec<Row>("SELECT * FROM citations WHERE source = ? AND source_kind = 'contribution' ORDER BY item", id).toArray()
         .map((x) => ({ item: String(x.item), version: Number(x.version), ...(x.lines ? { lines: JSON.parse(String(x.lines)) as [number, number] } : {}) })),
-      assumes: JSON.parse(String(r.assumes)), createdAt: String(r.created_at), flags: JSON.parse(String(r.flags ?? "[]")),
+      assumes: JSON.parse(String(r.assumes)), createdAt: String(r.created_at), flags: JSON.parse(String(r.flags ?? "[]")), adds: JSON.parse(String(r.adds ?? "[]")),
     };
   }
 
@@ -456,12 +478,12 @@ export class ObjectiveDO extends DurableObject<Env> {
   // ---------- candidates ----------
 
   frontier(accepted: string[], limit = 6) {
-    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq }]));
+    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq, adds: c.adds }]));
     return planFrontier(nodes, new Set(accepted), limit);
   }
 
   closureOf(selected: string[], accepted: string[]): string[] {
-    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq }]));
+    const nodes = new Map<string, ContributionNode>(this.contributions().map((c) => [c.id, { id: c.id, commit: c.commit, requires: c.requires, alternative: c.alternative ?? undefined, supersedes: c.supersedes ?? undefined, status: c.status, seq: c.seq, adds: c.adds }]));
     return closure(nodes, selected, new Set(accepted));
   }
 

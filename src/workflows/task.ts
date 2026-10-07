@@ -165,7 +165,8 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const st = await computer.agentState();
       const ok = st.state === "exited" && st.exitCode === 0;
       const dirty = r.stdout.split("\n").filter((l) => /^[ MADRCU?]{2} /.test(l)).length;
-      await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${results.filter((x) => x.status === "registered").length} new contributions${dirty ? `; ${dirty} files left uncommitted` : ""}${ok ? "" : `; ${st.tail?.slice(-200) ?? st.state}`}`);
+      const published = await objective.attemptContributions(tid, epoch);
+      await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${published} contributions published${dirty ? `; ${dirty} files left uncommitted` : ""}${ok ? "" : `; ${st.tail?.slice(-200) ?? st.state}`}`);
       await computer.destroy("task finished");
       return { ok, results };
     });

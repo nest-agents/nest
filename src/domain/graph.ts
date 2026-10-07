@@ -10,7 +10,33 @@ export type ContributionNode = {
   supersedes?: string;
   status: ContributionStatus;
   seq: number;
+  /** Paths this contribution creates. Two independent contributions that create the same path cannot compose. */
+  adds?: string[];
 };
+
+/** Every contribution this one depends on, directly or not. */
+function ancestors(nodes: Map<string, ContributionNode>, id: string, seen = new Set<string>()): Set<string> {
+  for (const d of nodes.get(id)?.requires ?? []) if (!seen.has(d)) { seen.add(d); ancestors(nodes, d, seen); }
+  return seen;
+}
+
+/**
+ * Implicit alternatives: independent contributions that create the same file are mutually exclusive, so
+ * the planner chooses between them instead of composing a conflict it can already see.
+ */
+export function overlapGroups(nodes: Map<string, ContributionNode>, ids: string[]): string[][] {
+  const parent = new Map(ids.map((id) => [id, id]));
+  const find = (x: string): string => (parent.get(x) === x ? x : find(parent.get(x)!));
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    const a = nodes.get(ids[i]!)!, b = nodes.get(ids[j]!)!;
+    if (!a.adds?.length || !b.adds?.length || !a.adds.some((p) => b.adds!.includes(p))) continue;
+    if (ancestors(nodes, a.id).has(b.id) || ancestors(nodes, b.id).has(a.id)) continue;
+    parent.set(find(a.id), find(b.id));
+  }
+  const groups = new Map<string, string[]>();
+  for (const id of ids) groups.set(find(id), [...(groups.get(find(id)) ?? []), id]);
+  return [...groups.values()].filter((g) => g.length > 1).map((g) => g.sort((x, y) => nodes.get(x)!.seq - nodes.get(y)!.seq));
+}
 
 export class GraphError extends Error {
   constructor(
@@ -108,6 +134,15 @@ export function planFrontier(
   const groups = new Map<string, ContributionNode[]>();
   for (const n of pool)
     if (n.alternative && !locked.has(n.alternative)) groups.set(n.alternative, [...(groups.get(n.alternative) ?? []), n]);
+  // Overlaps among the remaining free contributions become implicit groups named after the shared file.
+  const free = pool.filter((n) => !n.alternative).map((n) => n.id);
+  const implicit = new Map<string, string>();
+  for (const g of overlapGroups(nodes, free)) {
+    const shared = nodes.get(g[0]!)!.adds!.find((p) => g.every((id) => nodes.get(id)!.adds?.includes(p))) ?? g[0]!;
+    const name = `overlap:${shared}`;
+    groups.set(name, g.map((id) => nodes.get(id)!));
+    for (const id of g) implicit.set(id, name);
+  }
   const groupNames = [...groups.keys()].sort();
   const combos: Record<string, string>[] = [{}];
   for (const g of groupNames) {
@@ -120,7 +155,11 @@ export function planFrontier(
   for (const choice of combos) {
     const chosen = new Set(Object.values(choice));
     const excluded = new Set(
-      pool.filter((n) => n.alternative && (locked.has(n.alternative) ? locked.get(n.alternative) !== n.id : !chosen.has(n.id))).map((n) => n.id),
+      pool.filter((n) => {
+        const group = n.alternative ?? implicit.get(n.id);
+        if (!group) return false;
+        return n.alternative && locked.has(n.alternative) ? locked.get(n.alternative) !== n.id : !chosen.has(n.id);
+      }).map((n) => n.id),
     );
     for (const id of replaced) excluded.add(id);
     const usable = (id: string, trail: Set<string> = new Set()): boolean => {
@@ -144,6 +183,7 @@ export function planFrontier(
     seen.add(key);
     out.push({ selected, order, choice, ready: order.every((id) => nodes.get(id)!.status === "approved") });
   }
+  const approvedCount = (c: PlannedCandidate) => c.order.filter((id) => nodes.get(id)!.status === "approved").length;
   // Ready first, then the most complete, then whichever chose earlier-published work.
   const seqs = (c: PlannedCandidate) => Object.keys(c.choice).sort().map((g) => nodes.get(c.choice[g]!)!.seq);
   const earlier = (a: number[], b: number[]) => {
@@ -151,6 +191,6 @@ export function planFrontier(
     return a.length - b.length;
   };
   return out
-    .sort((a, b) => Number(b.ready) - Number(a.ready) || b.order.length - a.order.length || earlier(seqs(a), seqs(b)))
+    .sort((a, b) => Number(b.ready) - Number(a.ready) || approvedCount(b) - approvedCount(a) || b.order.length - a.order.length || earlier(seqs(a), seqs(b)))
     .slice(0, limit);
 }

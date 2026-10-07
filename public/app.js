@@ -332,6 +332,16 @@ function inboxHtml() {
         ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
         <div class="row">${owner() ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}</div></div>`;
     }
+    if (i.kind === "conflict") {
+      const k = S.candidates.find((x) => x.id === i.target);
+      if (!k) return "";
+      const members = k.order.map((id) => S.contributions.find((x) => x.id === id)).filter(Boolean);
+      const overlapping = members.filter((m) => m.paths.some((p) => (k.conflict ?? "").includes(p)));
+      return `<div class="card focus"><h4>Overlapping work in ${esc(k.name)}</h4><p>Real git could not combine these contributions. Keep one, and the others are blocked with that reason.</p>
+        <div class="fail-line">${esc(k.conflict ?? "")}</div>
+        ${overlapping.map((m) => `<div class="review"><div class="row" style="justify-content:space-between"><span class="who"><b>${esc(nameOf(m.author))}</b><span class="id">${esc(short(m.id))}</span></span>${owner() ? `<button class="btn small" data-keep="${esc(m.id)}" data-among="${esc(overlapping.map((x) => x.id).join(","))}" data-inbox="${esc(i.id)}" type="button">Keep this one</button>` : ""}</div><q>${esc(m.title)}</q><div class="meta"><span class="id">${m.paths.map(esc).join(", ")}</span></div></div>`).join("")}
+        ${owner() ? `<div class="row"><button class="btn small" data-resolve="${esc(i.id)}" type="button">Dismiss</button></div>` : ""}</div>`;
+    }
     const c = S.contributions.find((x) => x.id === i.target);
     if (!c) return "";
     return `<div class="card focus"><h4>${esc(c.title)}</h4><p>${esc(nameOf(c.author))} published <span class="id">${esc(short(c.id))}</span>. A person is needed:</p>
@@ -458,6 +468,16 @@ document.addEventListener("click", (e) => {
   if (t.dataset.act === "compose") return act(() => api("/api/compose", { method: "POST", body: "{}" }), "Composing outcomes");
   if (t.dataset.start) return startTask(t.dataset.start);
   if (t.dataset.pause) return act(() => api(`/api/tasks/${t.dataset.pause}/pause`, { method: "POST", body: "{}" }), "Pause requested; the agent stops at its next boundary");
+  if (t.dataset.keep) {
+    const keep = t.dataset.keep;
+    const others = t.dataset.among.split(",").filter((id) => id && id !== keep);
+    return act(async () => {
+      for (const id of others) await api("/api/reviews", { method: "POST", body: JSON.stringify({ target: id, verdict: "block", summary: `Overlaps ${short(keep)}; the owner chose to keep ${short(keep)}.` }) });
+      await api(`/api/inbox/${t.dataset.inbox}/resolve`, { method: "POST", body: JSON.stringify({ resolution: `kept ${keep}` }) });
+      await api("/api/compose", { method: "POST", body: "{}" });
+    }, `Kept ${short(keep)}; recomposing`);
+  }
+  if (t.dataset.resolve) return act(() => api(`/api/inbox/${t.dataset.resolve}/resolve`, { method: "POST", body: "{}" }), "Dismissed");
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";
     return act(() => api("/api/reviews", { method: "POST", body: JSON.stringify({ target: t.dataset.review, verdict: t.dataset.verdict, summary }) }), "Review recorded");

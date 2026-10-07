@@ -99,6 +99,19 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json({ reset: true });
   }
 
+  if (route === "POST /api/admin/swarm") {
+    require(p, "owner");
+    const b = await body<{ name: string; count: number; offset?: number }>(request);
+    const { prepareSwarm } = await import("./swarm");
+    return json(await prepareSwarm(env, b.name, Math.min(Math.max(1, Math.floor(b.count)), 500), Math.max(0, Math.floor(b.offset ?? 0))));
+  }
+
+  const swarmStats = /^\/api\/admin\/swarm\/([a-z0-9-]{3,40})$/.exec(url.pathname);
+  if (swarmStats && request.method === "GET") {
+    require(p, "owner");
+    return json(await env.OBJECTIVES.getByName(swarmStats[1]!).registrations());
+  }
+
   if (route === "POST /api/admin/bootstrap") {
     require(p, "owner");
     return json(await bootstrap(env));
@@ -190,6 +203,14 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     const b = await body<{ target: string; verdict: "approve" | "changes" | "block" | "comment"; summary: string }>(request);
     const id = `rv-you-${crypto.randomUUID().slice(0, 8)}`;
     return json(await objective.addReview({ id, target: b.target, reviewer: "you", verdict: b.verdict, confidence: 1, summary: String(b.summary ?? "").slice(0, 4000), findings: [], triage: false }));
+  }
+
+  const resolve = /^\/api\/inbox\/([a-z0-9_-]{3,80})\/resolve$/.exec(url.pathname);
+  if (resolve && request.method === "POST") {
+    require(p, "owner");
+    const b = await body<{ resolution?: string }>(request);
+    await objective.resolveInbox(resolve[1]!, String(b.resolution ?? "resolved by the owner").slice(0, 200));
+    return json({ resolved: resolve[1] });
   }
 
   if (route === "POST /api/context") {

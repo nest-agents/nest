@@ -297,3 +297,22 @@ describe("look-alike evasion", () => {
     expect(injectionFindings("+// Привет мир, plain Russian is fine")).toEqual([]);
   });
 });
+
+describe("overlap-aware frontier", () => {
+  it("never composes two independent contributions that create the same file", () => {
+    const g = graph(
+      C("encK", 1, { adds: ["src/csv.ts"] }),
+      C("encW", 2, { adds: ["src/csv.ts"] }),
+      C("rowsK", 3, { requires: ["encK"], adds: ["src/export.ts"] }),
+      C("ui", 4, { adds: ["src/export-client.ts"] }),
+    );
+    const f = planFrontier(g, new Set());
+    for (const c of f) expect(c.order.includes("encK") && c.order.includes("encW")).toBe(false);
+    expect(f[0]!.order).toEqual(["encK", "rowsK", "ui"]);
+    expect(f.some((c) => c.order.includes("encW") && !c.order.includes("rowsK"))).toBe(true);
+  });
+  it("keeps a contribution together with what it was built on", () => {
+    const g = graph(C("a", 1, { adds: ["x.ts"] }), C("b", 2, { requires: ["a"], adds: ["x.ts"] }));
+    expect(planFrontier(g, new Set())[0]!.order).toEqual(["a", "b"]);
+  });
+});
