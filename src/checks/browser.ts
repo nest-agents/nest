@@ -14,7 +14,7 @@ export async function exportByClick(
   previewUrl: string,
   columns: string[],
   /** Fetches a candidate path directly from its container (a Worker cannot fetch its own public URL). */
-  refetch: (path: string, viewer: string) => Promise<Response>,
+  refetch: (path: string, viewer: string, method: string) => Promise<Response>,
   timeoutMs = 25_000,
 ): Promise<{ check: ClickCheck; screenshot: Uint8Array | null }> {
   const result = (status: ClickCheck["status"], detail: string): ClickCheck => ({ id: "export-click", status, detail: detail.slice(0, 500) });
@@ -24,7 +24,7 @@ export async function exportByClick(
     const page = await browser.newPage();
     await page.setViewport({ width: 1100, height: 720, deviceScaleFactor: 1 });
     const files: string[] = [];
-    const unread: { url: string; headers: Record<string, string> }[] = [];
+    const unread: { url: string; method: string; headers: Record<string, string> }[] = [];
     page.on("response", async (r) => {
       // Preflights carry no file, and a blob: or data: download replays a response already seen.
       if (r.request().method() === "OPTIONS" || !/^https?:/.test(r.url())) return;
@@ -34,7 +34,7 @@ export async function exportByClick(
       const body = await r.text().catch(() => "");
       // A navigation that becomes a download has no readable body; fetch it again the same way.
       if (body) files.push(body);
-      else unread.push({ url: r.url(), headers: r.request().headers() });
+      else unread.push({ url: r.url(), method: r.request().method(), headers: r.request().headers() });
     });
     await page.goto(previewUrl, { waitUntil: "networkidle0", timeout: 15_000 });
     if (await page.$("#viewer")) await page.select("#viewer", VIEWER);
@@ -48,7 +48,7 @@ export async function exportByClick(
     for (const u of unread) {
       const url = new URL(u.url);
       if (!url.pathname.startsWith(prefix)) continue;
-      const res = await refetch(url.pathname.slice(prefix.length) + url.search, u.headers["x-harbor-viewer"] ?? VIEWER);
+      const res = await refetch(url.pathname.slice(prefix.length) + url.search, u.headers["x-harbor-viewer"] ?? VIEWER, u.method);
       if (res.ok) files.push(await res.text());
     }
     await new Promise((r) => setTimeout(r, 300));

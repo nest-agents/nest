@@ -75,7 +75,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
         const checks = [
           ...(await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, data ? await sha256Hex(data) : "missing", 25_000)),
-          (await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${id}/`, plan.columns, (path, viewer) => call(path, viewer))).check,
+          (await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method))).check,
         ];
         await objective.setBaseline(baselineKey, checks);
         await objective.log("Sandbox", "baseline", `Checkpoint ${plan.head.version} passes ${checks.filter((k) => k.status === "PASS").length} of ${checks.length} checks on its own`);
@@ -126,7 +126,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           : HARBOR_CHECKS.map((id) => ({ id, status: "ERROR" as const, detail: `candidate did not start: ${served.detail}`.slice(0, 500) }));
         if (served.ok) {
           // A real browser clicks the button on the live preview; the screenshot goes on the outcome card.
-          const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer) => call(path, viewer));
+          const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method));
           checks.push(click.check);
           if (click.screenshot) await this.env.OBJECTS.put(`shots/${c.id}.png`, click.screenshot, { httpMetadata: { contentType: "image/png" } });
         }
