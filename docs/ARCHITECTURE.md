@@ -99,6 +99,9 @@ Inputs: live contributions, their dependencies, alternative groups, and which fi
 - **Implicit alternatives.** Independent contributions that create the same file cannot compose, so they become a choice automatically. In the second live run, three agents each created `test/ui.test.ts`, and two each wrote a CSV encoder.
 - **Ranking.** Whole outcomes go before fragments of other outcomes, then ready before waiting, then the most approved. The top three are composed.
 - **Judging.** Each checkpoint is measured once per context version. An outcome that fails only what the checkpoint also fails is **Incomplete**. One that fails a check the checkpoint passes **Breaks a check**.
+- **Conflicts.** A conflict becomes a choice for a person: keep one contribution, or **reconcile with an agent**.
+  - Composition keeps the tree of everything that did combine, and the reconcile task starts there with the conflicting change as data.
+  - What the task publishes replaces the conflicting contribution once reviewers approve it. Until then, the original and the replacement are a choice.
 - **Repair.** At most one automatic repair runs at a time. It starts for a true regression only:
   - a check that passed for the same selection before and fails now; or
   - after a context change, a check the accepted checkpoint passed when it was accepted.
@@ -147,7 +150,14 @@ Full detail is in [SECURITY.md](SECURITY.md). In short:
 | Event fan-in | Workflows per push | Idempotent registration; contribution ids are derived from repository and commit |
 | Coordination | One Durable Object per objective | Large objectives would split by capability |
 
-`scripts/swarm.mjs` measures the real path: N synthetic contributors push real commits to their own Artifacts forks at once. Each push goes through the event trigger, the ingest Workflow and the Durable Object. The README reports the measured result.
+`scripts/swarm.mjs` measures the real path: N synthetic contributors push real commits to their own Artifacts forks at once. Each push goes through the event trigger, the ingest Workflow and the Durable Object.
+
+Measured on 2026-10-07 with 100 contributors:
+- 100 pushes landed in 2.8 s, 25 at a time;
+- all 100 were registered and none was lost;
+- push to registration took 4.6 s at p50, 7.4 s at p90 and 13.9 s at most.
+
+Setup took 55 s for 100 forks, five at a time, because 20 simultaneous forks of one repository returned `INTERNAL_ERROR`.
 
 ## 9. Designed, not built
 
@@ -169,3 +179,6 @@ Each item was found in a real run on Cloudflare and is fixed in the commit histo
 - **Containers outliving a reset.** Computers were named by task and epoch, so a new attempt found the previous generation's agent still running. Computers are now named by workspace.
 - **Repair cascades.** In the first run, every conflict auto-started a repair that began from scratch. Overlaps are now choices for a person, repairs need a true regression and the failing tree, and only one runs at a time.
 - **Reviewer scope.** A reviewer blocked the button task for not implementing the endpoint another task owned. Reviewers now see the contribution's task and which tasks own the rest.
+- **Handovers that dropped their payload.** Starting the next attempt cleared the paused note before the new attempt read it, so Heron rewrote Wren's staged work from scratch. The note now travels in the workflow's parameters. Pauses also carry a Workers AI summary of the outgoing agent's activity. In the re-test, all 19 lines of Kestrel's uncommitted change reached Wren's commit.
+- **Leftovers after acceptance.** Pieces that create a file the checkpoint already has, and approaches the person turned down, kept being composed as conflicts. Acceptance now retires them with a reason.
+- **Reading files through the browser.** A CSV read over the DevTools protocol is buffered whole before any size cap applies. The browser check now records only which request the click made, and replays it through the container with a streaming cap.
