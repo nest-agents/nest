@@ -97,8 +97,12 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
         });
         if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
-        if (status === "failing" && membersApproved && served.ok) {
-          await openRepair(this.env, objective, c.id, c.name, failed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
+        // Repair regressions only: a check that passed for this same selection of work before (for example
+        // under an older requirement version) and fails now. An unfinished objective is not a regression.
+        const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
+        const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
+        if (status === "failing" && membersApproved && served.ok && regressed.length) {
+          await openRepair(this.env, objective, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
         }
         return { status };
       }),
