@@ -216,6 +216,8 @@ pre.diff .d { color: var(--faint); text-decoration: line-through; }
 .chk.fail { background: transparent; border-color: var(--text); position: relative; }
 .chk.fail::after { content: ""; position: absolute; inset: 4px -2px; border-top: 1.5px solid var(--text); transform: rotate(45deg); }
 .chk.pend { border-style: dotted; }
+.chk.todo { border-style: dashed; border-color: var(--faint); }
+.fail-line.todo { color: var(--muted); }
 .status { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line-strong); color: var(--muted); }
 .status.ready { background: var(--signal); border-color: var(--signal); color: var(--signal-ink); }
 .status.accepted { background: var(--ink); border-color: var(--ink); color: var(--panel); }

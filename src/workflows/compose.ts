@@ -51,6 +51,36 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     if (!plan.planned.length) return { composed: 0 };
 
+    // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
+    // unfinished; one that fails a check the checkpoint passes has broken something.
+    const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}`;
+    const baseline = await step.do(`measure checkpoint ${plan.head.version}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" }, async () => {
+      const known = await objective.baseline(baselineKey);
+      if (known) return known;
+      const id = `base-${plan.head.version}-${plan.head.commit.slice(0, 10)}-${plan.head.contextDigest.slice(0, 6)}`;
+      const computerName = `runner-${id}`;
+      const computer = this.env.COMPUTERS.getByName(computerName);
+      try {
+        const composed = await computer.compose(
+          { computer: computerName, role: "runner", objective: objectiveId, candidate: id },
+          { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit }, [], candidateBranch(id),
+        );
+        if (!composed.ok) return [];
+        const served = await computer.serveCandidate();
+        if (!served.ok) return [];
+        const data = await artifacts.readBytes(projectRepo(this.env), plan.head.commit, "src/data.ts");
+        const call = (path: string, viewer: string | null, method = "GET") =>
+          computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
+        const checks = await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, data ? await sha256Hex(data) : "missing", 25_000);
+        await objective.setBaseline(baselineKey, checks);
+        await objective.log("Sandbox", "baseline", `Checkpoint ${plan.head.version} passes ${checks.filter((k) => k.status === "PASS").length} of ${checks.length} checks on its own`);
+        return checks;
+      } finally {
+        await computer.destroy("baseline measured").catch(() => undefined);
+      }
+    });
+    const passingAtHead = new Set(baseline.filter((k) => k.status === "PASS").map((k) => k.id));
+
     await Promise.all(plan.planned.map((c) =>
       step.do(`compose ${c.id}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" }, async () => {
         const prior = plan.existing.find((e) => e.id === c.id);
@@ -92,8 +122,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const failed = checks.filter((x) => x.status !== "PASS");
         const state = await objective.state();
         const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
-        const status = failed.length ? "failing" : membersApproved ? "ready" : "waiting";
-        await objective.updateCandidate(c.id, { status, commit: result.commit, checks, previewReady: served.ok }, {
+        const broken = failed.filter((f) => passingAtHead.has(f.id));
+        const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
+        const atHead = new Map(baseline.map((k) => [k.id, k.status]));
+        await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok }, {
           svc: "Sandbox",
           text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
         });
@@ -102,7 +134,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         // under an older requirement version) and fails now. An unfinished objective is not a regression.
         const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
         const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
-        if (status === "failing" && membersApproved && served.ok && regressed.length) {
+        if (failed.length && membersApproved && served.ok && regressed.length) {
           await openRepair(this.env, objective, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
         }
         return { status };

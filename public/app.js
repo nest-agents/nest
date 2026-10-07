@@ -315,10 +315,12 @@ function reviewHtml(r) {
 function checksHtml(c) {
   if (!c.checks.length) return `<div class="checks"><span style="font-size:12.5px;color:var(--muted)">Checks not run yet</span></div>`;
   const pass = c.checks.filter((k) => k.status === "PASS").length;
-  return `<div class="checks">${c.checks.map((k) => `<span class="chk ${k.status === "PASS" ? "pass" : "fail"}" title="${esc(k.id)}: ${esc(k.status)}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${pass} of ${c.checks.length} checks</span></div>`;
+  const kind = (k) => (k.status === "PASS" ? "pass" : k.atHead && k.atHead !== "PASS" ? "todo" : "fail");
+  const says = { pass: "passes", todo: "not done yet", fail: "broken" };
+  return `<div class="checks">${c.checks.map((k) => `<span class="chk ${kind(k)}" title="${esc(k.id)}: ${says[kind(k)]}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${pass} of ${c.checks.length} checks</span></div>`;
 }
 
-const statusLabel = { composing: "Composing", ready: "Ready", waiting: "Waiting on review", failing: "Failing checks", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
+const statusLabel = { composing: "Composing", ready: "Ready", waiting: "Waiting on review", incomplete: "Incomplete", failing: "Breaks a check", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
 
 function inboxHtml() {
   const items = openInbox();
@@ -355,11 +357,11 @@ function inboxHtml() {
 function outcomesHtml() {
   const list = S.candidates.filter((c) => c.status !== "superseded");
   if (!list.length) return `<div class="empty"><h4>No outcomes yet</h4><p>When contributions arrive, Nest assembles every compatible combination, merges it with real git and runs the trusted checks on the whole result.</p></div>`;
-  const rank = { ready: 0, accepted: 1, waiting: 2, composing: 3, failing: 4, conflict: 5, outdated: 6 };
+  const rank = { ready: 0, accepted: 1, waiting: 2, composing: 3, incomplete: 4, failing: 5, conflict: 6, outdated: 7 };
   return list.slice().sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9)).map((c) => `
     <div class="card ${c.id === selCand ? "focus" : ""}"><div class="row" style="justify-content:space-between"><h4>${esc(c.name)}</h4><span class="status ${c.status === "ready" ? "ready" : c.status === "accepted" ? "accepted" : c.status === "outdated" ? "outdated" : ""}">${esc(statusLabel[c.status] ?? c.status)}</span></div>
     <div class="row"><span class="id" style="color:var(--muted)">${esc(c.id)}</span><span style="font-size:12.5px;color:var(--muted)">on checkpoint ${c.baseVersion}</span></div>
-    ${checksHtml(c)}${c.checks.filter((k) => k.status !== "PASS").map((k) => `<div class="fail-line"><b>${esc(k.id)}</b> ${esc(k.detail)}</div>`).join("")}
+    ${checksHtml(c)}${c.checks.filter((k) => k.status !== "PASS").sort((a, b) => Number(b.atHead === "PASS") - Number(a.atHead === "PASS")).map((k) => `<div class="fail-line ${k.atHead === "PASS" ? "" : "todo"}"><b>${esc(k.id)}</b> ${k.atHead === "PASS" ? "Broken: passes on the checkpoint, fails here. " : k.atHead ? "Not done yet. " : ""}${esc(k.detail)}</div>`).join("")}
     ${c.conflict ? `<div class="fail-line">${esc(c.conflict)}</div>` : ""}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}

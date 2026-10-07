@@ -25,7 +25,7 @@ export type Review = {
 };
 export type Candidate = {
   id: string; name: string; baseVersion: number; baseCommit: string; contextDigest: string; policyDigest: string;
-  order: string[]; choice: Record<string, string>; status: string; commit: string | null; checks: { id: string; status: string; detail: string }[];
+  order: string[]; choice: Record<string, string>; status: string; commit: string | null; checks: { id: string; status: string; detail: string; atHead?: string | null }[];
   previewReady: boolean; note: string | null; conflict: string | null; createdAt: string;
 };
 export type InboxItem = { id: string; kind: string; target: string; reasons: string[]; status: string; createdAt: string; resolution: string | null };
@@ -357,6 +357,16 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("UPDATE contributions SET flags = ? WHERE id = ?", JSON.stringify(flags), id);
     this.emit("Nest", "flag", `${c.title}: ${reason}`, { contribution: id });
     this.reroute(id);
+  }
+
+  /** Check results for an accepted checkpoint under a context version: what "not broken" means for outcomes on it. */
+  baseline(key: string): { id: string; status: string; detail: string }[] | null {
+    const v = this.meta(`baseline:${key}`);
+    return v ? JSON.parse(v) : null;
+  }
+
+  setBaseline(key: string, checks: { id: string; status: string; detail: string }[]): void {
+    this.setMeta(`baseline:${key}`, JSON.stringify(checks));
   }
 
   /** Backfill for contributions registered before Nest recorded which files they create. */
