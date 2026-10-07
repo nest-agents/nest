@@ -6,6 +6,11 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "upload_source_maps": true,
+  // Nest's own domain. workers.dev and preview URLs are off for this Worker only; other Workers on the
+  // account keep theirs.
+  "routes": [{ "pattern": "nestagents.dev", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp", "/preview/*", "/shots/*"] },
 
   "vars": {

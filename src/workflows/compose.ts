@@ -8,7 +8,8 @@ import { HARBOR_CHECKS, runHarborChecks } from "../checks/harbor";
 import { candidateBranch, objectiveStub, projectRepo, projectStub, short } from "../names";
 import { sha256Hex } from "../protocol";
 
-type Params = { objective: string; reason?: string };
+/** `only` recomposes exactly these outcomes (an owner's request), instead of the planner's top three. */
+type Params = { objective: string; reason?: string; only?: string[] };
 
 const remoteOf = (env: Env, repo: string) => `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${repo}.git`;
 
@@ -31,7 +32,12 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       const seed = await artifacts.readBytes(projectRepo(this.env), checkpoints[0]!.commit, "src/data.ts");
       const byId = new Map(state.contributions.map((c) => [c.id, c]));
       const planned = [];
-      for (const f of frontier.slice(0, 3)) {
+      const only = event.payload.only?.length ? new Set(event.payload.only) : null;
+      if (only) {
+        for (const k of state.candidates.filter((x) => only.has(x.id) && x.baseVersion === head.version))
+          planned.push({ id: k.id, name: k.name, order: k.order, choice: k.choice, ready: false, reusedAcross: [] as string[] });
+      }
+      for (const f of only ? [] : frontier.slice(0, 3)) {
         const id = `k${(await sha256Hex(`${head.version}|${head.contextDigest}|${f.order.join(",")}`)).slice(0, 10)}`;
         const name = outcomeName(f.order.map((cid) => byId.get(cid)!).filter(Boolean), Object.keys(f.choice).filter((g) => !/^(overlap|replace):/.test(g)).map((g) => byId.get(f.choice[g]!)!), state);
         const reusedAcross = f.order.filter((cid) => {

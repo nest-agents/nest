@@ -142,7 +142,7 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     const b = await body<{ ids: string[] }>(request);
     await objective.markCandidatesOutdated((b.ids ?? []).filter((x) => /^k[0-9a-f]{10}$/.test(x)));
     const id = `compose-${Date.now()}`;
-    await env.COMPOSE.create({ id, params: { objective: OBJECTIVE_ID, reason: "owner asked to recompose" } });
+    await env.COMPOSE.create({ id, params: { objective: OBJECTIVE_ID, reason: "owner asked to recompose", only: b.ids } });
     return json({ workflow: id });
   }
 
@@ -163,6 +163,18 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     let deleted = 0;
     for (let i = 0; i < names.length; i += 20) deleted += (await Promise.all(names.slice(i, i + 20).map((n) => env.ARTIFACTS.delete(n).catch(() => false)))).filter(Boolean).length;
     return json({ matched: names.length, deleted });
+  }
+
+  if (route === "POST /api/admin/gateway/probe") {
+    // A tiny Workers AI request through the configured gateway. AI Gateway creates a gateway the first
+    // time the account's own binding names it.
+    require(p, "owner");
+    try {
+      const out = await env.AI.run("@cf/meta/llama-3.2-1b-instruct" as keyof AiModels, { prompt: "Reply with ok", max_tokens: 5 } as never, { gateway: { id: env.AI_GATEWAY_ID } } as never);
+      return json({ ok: true, gateway: env.AI_GATEWAY_ID, logId: (env.AI as unknown as { aiGatewayLogId?: string }).aiGatewayLogId ?? null, out });
+    } catch (e) {
+      return json({ ok: false, gateway: env.AI_GATEWAY_ID, error: String(e).slice(0, 400) });
+    }
   }
 
   if (route === "POST /api/admin/computers/destroy") {
