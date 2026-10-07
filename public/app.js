@@ -364,18 +364,39 @@ function inboxHtml() {
 }
 
 function outcomesHtml() {
-  const list = S.candidates.filter((c) => c.status !== "superseded");
-  if (!list.length) return `<div class="empty"><h4>No outcomes yet</h4><p>When contributions arrive, Nest assembles every compatible combination, merges it with real git and runs the trusted checks on the whole result.</p></div>`;
-  const rank = { ready: 0, accepted: 1, waiting: 2, composing: 3, incomplete: 4, failing: 5, conflict: 6, outdated: 7 };
-  return list.slice().sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9)).map((c) => `
-    <div class="card ${c.id === selCand ? "focus" : ""}"><div class="row" style="justify-content:space-between"><h4>${esc(c.name)}</h4><span class="status ${c.status === "ready" ? "ready" : c.status === "accepted" ? "accepted" : c.status === "outdated" ? "outdated" : ""}">${esc(statusLabel[c.status] ?? c.status)}</span></div>
+  const rank = { ready: 0, waiting: 1, composing: 2, incomplete: 3, failing: 4, conflict: 5, outdated: 6 };
+  const live = S.candidates.filter((c) => !["superseded", "accepted"].includes(c.status)).sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+  const head = S.head?.version ?? 0;
+  const current = live.length
+    ? live.map(outcomeCard).join("")
+    : `<div class="empty"><h4>Nothing to accept on checkpoint ${head}</h4><p>When contributions arrive, Nest assembles every compatible combination, merges it with real git and runs the trusted checks on the whole result.</p></div>`;
+  return `${current}${historyHtml()}`;
+}
+
+/** Every checkpoint, newest first: what was accepted, why, and the commit it points at. */
+function historyHtml() {
+  const cps = (S.checkpoints ?? []).slice().sort((a, b) => b.version - a.version);
+  if (cps.length < 2) return "";
+  return `<section class="history" aria-label="Checkpoint history"><h3>History</h3><ol>${cps.map((cp) => {
+    const c = cp.candidate ? S.candidates.find((x) => x.id === cp.candidate) : null;
+    const what = c ? c.name : cp.reason;
+    const why = c && cp.reason && !cp.reason.startsWith("Accepted ") ? cp.reason : "";
+    return `<li class="${cp.version === headVersion() ? "now" : ""}"><span class="v">${cp.version}</span><div><b>${esc(what)}</b>${why ? `<q>${esc(why)}</q>` : ""}<span class="meta"><span class="id">${esc(cp.commit.slice(0, 7))}</span> ${esc(timeOf(cp.createdAt))}${c ? ` <button class="link" data-cand="${esc(c.id)}" type="button">Show on map</button>` : ""}</span></div></li>`;
+  }).join("")}</ol></section>`;
+}
+const headVersion = () => S.head?.version ?? 0;
+const timeOf = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+
+function outcomeCard(c) {
+  return `
+    <div class="card ${c.id === selCand ? "focus" : ""}"><div class="row" style="justify-content:space-between"><h4>${esc(c.name)}</h4><span class="status ${c.status === "ready" ? "ready" : c.status === "outdated" ? "outdated" : ""}">${esc(statusLabel[c.status] ?? c.status)}</span></div>
     <div class="row"><span class="id" style="color:var(--muted)">${esc(c.id)}</span><span style="font-size:12.5px;color:var(--muted)">on checkpoint ${c.baseVersion}</span></div>
     ${checksHtml(c)}${c.checks.filter((k) => k.status !== "PASS").sort((a, b) => Number(b.atHead === "PASS") - Number(a.atHead === "PASS")).map((k) => `<div class="fail-line ${k.atHead === "PASS" ? "" : "todo"}"><b>${esc(k.id)}</b> ${k.atHead === "PASS" ? "Broken: passes on the checkpoint, fails here. " : k.atHead ? "Not done yet. " : ""}${esc(k.detail)}</div>`).join("")}
     ${c.conflict ? `<div class="fail-line">${esc(c.conflict)}</div>` : ""}
     ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
-    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`).join("");
+    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`;
 }
 
 function inspectHtml() {
@@ -408,10 +429,11 @@ function inspectHtml() {
 }
 
 function renderRight() {
+  if (!S) return;
   for (const k of ["inbox", "outcomes", "inspect"]) $(`#tab-${k}`).setAttribute("aria-selected", String(tab === k));
   const n = openInbox().length;
   $("#inboxCount").textContent = n; $("#inboxCount").classList.toggle("zero", n === 0);
-  const live = S.candidates.filter((c) => c.status !== "superseded").length;
+  const live = S.candidates.filter((c) => !["superseded", "accepted"].includes(c.status)).length;
   $("#outCount").textContent = live; $("#outCount").classList.toggle("zero", live === 0);
   $("#rightBody").innerHTML = tab === "inbox" ? inboxHtml() : tab === "outcomes" ? outcomesHtml() : inspectHtml();
 }
