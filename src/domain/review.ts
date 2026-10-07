@@ -51,6 +51,8 @@ export type Subject = {
   citedItems: string[];
   /** True when the change adds a symlink (mode 120000) or a submodule (mode 160000). */
   specialEntries?: boolean;
+  /** Deterministic concerns (for example possible prompt injection) that only a person can clear. */
+  flags?: string[];
 };
 
 /**
@@ -112,6 +114,7 @@ export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact
   if (!subject.paths.length) reasons.push("Changed files are unknown");
   if (unusual.length) reasons.push(`Unusual file paths: ${unusual.map((p) => JSON.stringify(p)).join(", ")}`);
   if (subject.specialEntries) reasons.push("Adds a symlink or submodule");
+  for (const f of subject.flags ?? []) reasons.push(f);
   if (protectedHit.length) reasons.push(`Touches protected files: ${protectedHit.join(", ")}`);
   if (reasons.length) return { state: "needs-human", reasons };
 

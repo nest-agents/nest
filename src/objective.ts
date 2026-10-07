@@ -17,6 +17,7 @@ export type Contribution = {
   id: string; seq: number; task: string | null; epoch: number; author: string; repo: string; commit: string; parent: string;
   title: string; message: string; alternative: string | null; supersedes: string | null; status: ContributionStatus;
   paths: string[]; special: boolean; requires: string[]; declared: string[]; cites: Citation[]; assumes: string[]; createdAt: string;
+  flags: string[];
 };
 export type Review = {
   id: string; target: string; reviewer: string; kind: ParticipantKind; family: string; verdict: Verdict; confidence: number;
@@ -54,7 +55,8 @@ export class ObjectiveDO extends DurableObject<Env> {
       CREATE UNIQUE INDEX IF NOT EXISTS attempts_repo ON attempts(repo);
       CREATE TABLE IF NOT EXISTS contributions(id TEXT PRIMARY KEY, seq INTEGER NOT NULL, task TEXT, epoch INTEGER NOT NULL, author TEXT NOT NULL,
         repo TEXT NOT NULL, commit_sha TEXT NOT NULL, parent TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, alternative TEXT,
-        supersedes TEXT, status TEXT NOT NULL, paths TEXT NOT NULL, special INTEGER NOT NULL, declared TEXT NOT NULL, assumes TEXT NOT NULL, created_at TEXT NOT NULL);
+        supersedes TEXT, status TEXT NOT NULL, paths TEXT NOT NULL, special INTEGER NOT NULL, declared TEXT NOT NULL, assumes TEXT NOT NULL, created_at TEXT NOT NULL,
+        flags TEXT NOT NULL DEFAULT '[]');
       CREATE INDEX IF NOT EXISTS contributions_commit ON contributions(commit_sha);
       CREATE TABLE IF NOT EXISTS deps(contribution TEXT NOT NULL, requires TEXT NOT NULL, PRIMARY KEY(contribution, requires));
       CREATE TABLE IF NOT EXISTS citations(source TEXT NOT NULL, source_kind TEXT NOT NULL, item TEXT NOT NULL, version INTEGER NOT NULL, lines TEXT,
@@ -265,7 +267,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("INSERT OR IGNORE INTO materializations VALUES (?, ?)", commit, JSON.stringify([...deps].sort()));
   }
 
-  registerContribution(c: Omit<Contribution, "seq" | "status" | "createdAt">): { contribution: Contribution; created: boolean } {
+  registerContribution(c: Omit<Contribution, "seq" | "status" | "createdAt" | "flags">): { contribution: Contribution; created: boolean } {
     const prior = this.contribution(c.id);
     if (prior) return { contribution: prior, created: false };
     // Re-check the attempt here: a pause between the caller's check and this call must still fence.
@@ -282,7 +284,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     const now = new Date().toISOString();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        "INSERT INTO contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?)",
+        "INSERT INTO contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, '[]')",
         c.id, seq, c.task, c.epoch, c.author, c.repo, c.commit, c.parent, c.title, c.message, c.alternative, c.supersedes,
         JSON.stringify(c.paths), c.special ? 1 : 0, JSON.stringify(c.declared), JSON.stringify(c.assumes), now,
       );
@@ -294,6 +296,16 @@ export class ObjectiveDO extends DurableObject<Env> {
     const who = this.participant(c.author);
     this.emit("Artifacts", "contribution", `${who?.name ?? c.author} pushed ${c.id.slice(2, 6)} ${c.title}`, { contribution: c.id, repo: c.repo, commit: c.commit });
     return { contribution: this.contribution(c.id)!, created: true };
+  }
+
+  /** A deterministic concern that no agent review can clear: only a person settles it. */
+  flagContribution(id: string, reason: string): void {
+    const c = this.contribution(id);
+    if (!c) throw new ObjectiveError("NOT_FOUND");
+    const flags = [...new Set([...c.flags, reason])];
+    this.sql.exec("UPDATE contributions SET flags = ? WHERE id = ?", JSON.stringify(flags), id);
+    this.emit("Nest", "flag", `${c.title}: ${reason}`, { contribution: id });
+    this.reroute(id);
   }
 
   contribution(id: string): Contribution | null {
@@ -316,7 +328,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       declared: JSON.parse(String(r.declared)),
       cites: this.sql.exec<Row>("SELECT * FROM citations WHERE source = ? AND source_kind = 'contribution' ORDER BY item", id).toArray()
         .map((x) => ({ item: String(x.item), version: Number(x.version), ...(x.lines ? { lines: JSON.parse(String(x.lines)) as [number, number] } : {}) })),
-      assumes: JSON.parse(String(r.assumes)), createdAt: String(r.created_at),
+      assumes: JSON.parse(String(r.assumes)), createdAt: String(r.created_at), flags: JSON.parse(String(r.flags ?? "[]")),
     };
   }
 
@@ -371,6 +383,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     return route(this.policy(), {
       author: c.author, authorKind: author?.kind ?? "agent", authorFamily: author?.family ?? "unknown",
       paths: c.paths.map((p) => (typeof p === "string" ? p : (p as { path: string }).path)), citedItems: c.cites.map((x) => x.item), specialEntries: c.special,
+      flags: c.flags,
     }, facts);
   }
 

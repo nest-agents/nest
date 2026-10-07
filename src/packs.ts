@@ -4,26 +4,32 @@ import { ArtifactsClient } from "./artifacts";
 import { citeOf, compilePack, type Pack, type PackSection } from "./context";
 import { estimateTokens } from "./domain/context";
 import { objectiveStub, projectRepo, projectStub, short } from "./names";
+import { boundary, UNTRUSTED_RULE, wrapUntrusted } from "./untrusted";
 
 /**
  * The repository at a commit, as pack sections: a file map first, then source before tests before the
  * rest, each file whole, stopping at the token budget. Large or binary files are listed but not included.
  */
-export async function repositorySections(env: Env, repo: string, commit: string, label: string, budgetTokens: number): Promise<PackSection[]> {
+export async function repositorySections(env: Env, repo: string, commit: string, label: string, budgetTokens: number, nonce = boundary()): Promise<PackSection[]> {
+  const MAX_FILES = 300;
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
-  const files = await artifacts.listFiles(repo, commit, 2000);
+  const files = await artifacts.listFiles(repo, commit, 5000);
   const rank = (p: string) => (p.startsWith("src/") ? 0 : p.startsWith("test/") ? 1 : p.startsWith("public/") ? 2 : 3);
   const textual = /\.(ts|tsx|js|mjs|cjs|json|jsonc|md|css|html|txt|toml|yaml|yml)$/i;
-  const sections: PackSection[] = [{ title: `${label}: file map`, text: files.map((f) => f.path).join("\n") }];
-  let used = estimateTokens(sections[0]!.text);
-  for (const f of [...files].sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path))) {
-    if (!textual.test(f.path)) continue;
-    const text = await artifacts.readText(repo, commit, f.path, 400_000).catch(() => null);
-    if (text === null) continue;
-    const t = estimateTokens(text) + 30;
-    if (used + t > budgetTokens) continue;
-    used += t;
-    sections.push({ title: `${label}: ${f.path}`, text: "```\n" + text + "\n```" });
+  const map = files.slice(0, 2000).map((f) => f.path).join("\n") + (files.length > 2000 ? `\n... ${files.length - 2000} more` : "");
+  const sections: PackSection[] = [{ title: `${label}: file map`, text: wrapUntrusted(nonce, "file map", map) }];
+  let used = estimateTokens(map);
+  const queue = files.filter((f) => textual.test(f.path)).sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path)).slice(0, MAX_FILES);
+  // Read in small parallel batches and stop as soon as the budget is spent.
+  for (let i = 0; i < queue.length && used < budgetTokens; i += 8) {
+    const batch = await Promise.all(queue.slice(i, i + 8).map(async (f) => ({ path: f.path, text: await artifacts.readText(repo, commit, f.path, 200_000).catch(() => null) })));
+    for (const { path, text } of batch) {
+      if (text === null) continue;
+      const t = estimateTokens(text) + 40;
+      if (used + t > budgetTokens) continue;
+      used += t;
+      sections.push({ title: `${label}: ${path}`, text: wrapUntrusted(nonce, path, text) });
+    }
   }
   return sections;
 }
@@ -38,8 +44,10 @@ export async function buildPack(env: Env, taskId: string, budgetTokens = 200_000
   const state = await objective.state();
   const task = state.tasks.find((t) => t.id === taskId);
   const people = new Map(state.participants.map((p) => [p.id, p.name]));
+  const nonce = boundary();
 
   const mandatory: PackSection[] = [
+    { title: "How to read this pack", text: UNTRUSTED_RULE.replaceAll("<id>", nonce) },
     {
       title: `Objective: ${state.objective.title ?? ""}`,
       text: `Completion criteria:\n${state.objective.criteria.map((c) => `- ${c}`).join("\n")}`,
@@ -58,30 +66,34 @@ export async function buildPack(env: Env, taskId: string, budgetTokens = 200_000
   if (others.length) {
     optional.push({
       title: "Work already published by others",
-      text: others.map((c) => {
+      text: wrapUntrusted(nonce, "published work", others.map((c) => {
         const reviews = state.reviews.filter((r) => r.target === c.id && !r.triage);
         const verdicts = reviews.map((r) => `${people.get(r.reviewer) ?? r.reviewer}: ${r.verdict}${r.summary ? ` — ${r.summary.slice(0, 200)}` : ""}`).join("; ");
         return `- ${c.id} "${c.title}" by ${people.get(c.author) ?? c.author} [${c.status}]${c.alternative ? ` alternative=${c.alternative}` : ""}\n  files: ${c.paths.join(", ")}${verdicts ? `\n  reviews: ${verdicts}` : ""}`;
-      }).join("\n"),
+      }).join("\n")),
     });
   }
   const findings = state.reviews.filter((r) => !r.triage && r.findings.length);
   if (findings.length) {
     optional.push({
       title: "Review findings so far",
-      text: findings.slice(-40).map((r) => `- on ${short(r.target)} by ${people.get(r.reviewer) ?? r.reviewer}: ${r.findings.map((f) => f.text).join(" | ").slice(0, 400)}`).join("\n"),
+      text: wrapUntrusted(nonce, "review findings", findings.slice(-40).map((r) => `- on ${short(r.target)} by ${people.get(r.reviewer) ?? r.reviewer}: ${r.findings.map((f) => f.text).join(" | ").slice(0, 400)}`).join("\n")),
     });
   }
   for (const item of context.filter((i) => !["requirement", "decision", "policy"].includes(i.kind)))
     optional.push({ title: `${item.kind}: ${item.title}`, cite: citeOf(item), text: item.body });
   // Massive context: the whole accepted repository, then other agents' full diffs, within the budget.
   const head = await project.head();
-  if (head) optional.push(...(await repositorySections(env, projectRepo(env), head.commit, `Repository at checkpoint ${head.version}`, Math.floor(budgetTokens * 0.5))));
+  if (head) optional.push(...(await repositorySections(env, projectRepo(env), head.commit, `Repository at checkpoint ${head.version}`, Math.floor(budgetTokens * 0.5), nonce)));
   if (others.length) {
     const { contributionDiff } = await import("./workflows/review");
-    for (const c of others.filter((x) => x.status !== "blocked").slice(-12)) {
-      const diff = await contributionDiff(env, c.repo, c.parent, c.commit, c.paths, 40_000).catch(() => "");
-      if (diff) optional.push({ title: `Diff of ${c.id} "${c.title}" by ${people.get(c.author) ?? c.author}`, text: "```diff\n" + diff + "\n```" });
+    let diffBudget = Math.floor(budgetTokens * 0.25);
+    for (const c of others.filter((x) => x.status !== "blocked").slice(-8)) {
+      if (diffBudget <= 0) break;
+      const diff = await contributionDiff(env, c.repo, c.parent, c.commit, c.paths.slice(0, 20), 40_000).catch(() => "");
+      if (!diff) continue;
+      diffBudget -= estimateTokens(diff);
+      optional.push({ title: `Diff of ${c.id} by ${people.get(c.author) ?? c.author}`, text: wrapUntrusted(nonce, `diff of ${c.id}`, `${c.title}\n\n${diff}`) });
     }
   }
   if (task) {
