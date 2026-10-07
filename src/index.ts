@@ -335,6 +335,8 @@ async function bootstrap(env: Env) {
     if (item) items.push(item);
   }
   const head = await project.bootstrap(commit, items);
+  // The first bootstrap's commits are the seeds that rehearsal resets return to.
+  if (head.version === 1) await (await import("./accepting")).recordSeeds(env, { project: head.commit, context: ctxCommit });
   for (const person of PEOPLE) await objective.upsertParticipant(person);
   for (const agent of AGENTS(env)) await objective.upsertParticipant(agent);
   const routing = items.find((i) => i.id === "policy/review-routing")?.policy as Partial<typeof DEFAULT_POLICY> | undefined;
