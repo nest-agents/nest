@@ -117,7 +117,9 @@ function render() {
   $("#objectiveTitle").textContent = S.objective.title ?? "Objective";
   $("#projectName").textContent = S.objective.project ? S.objective.project[0].toUpperCase() + S.objective.project.slice(1) : "Project";
   $("#headVer").textContent = S.head ? `checkpoint ${S.head.version}` : "not seeded";
-  $("#peopleCount").textContent = S.participants.filter((p) => p.kind === "person").length;
+  const people = S.participants.filter((p) => p.kind === "person").length;
+  $("#peopleCount").textContent = people;
+  $("#peopleNoun").textContent = people === 1 ? "person" : "people";
   $("#agentCount").textContent = S.participants.filter((p) => p.kind === "agent").length;
   $("#spend").textContent = `$${(S.spend.usedMicroUsd / 1e6).toFixed(2)}`;
   $("#signInBtn").textContent = owner() ? "Signed in" : "Sign in";
