@@ -18,5 +18,8 @@ export function parseWorkspaceRepo(name: string): { objective: string; generatio
 
 export const candidateBranch = (id: string) => `cand-${id}`;
 
+/** Workflow instance ids are global and permanent, so they carry the objective generation too. */
+export const taskWorkflowId = (generation: string, task: string, epoch: number) => `task-${generation}-${task}-e${epoch}`;
+
 /** Short, stable display handle for a contribution id (c_xxxxxxxxxxxx -> xxxx). */
 export const short = (id: string) => id.replace(/^c_/, "").slice(0, 4);

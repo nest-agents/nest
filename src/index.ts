@@ -139,7 +139,8 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     const t = await objective.task(pause[1]!);
     if (!t || t.status !== "running") throw new HttpError(409, "NOT_RUNNING");
     // The running workflow notices the epoch change at its next tool boundary and saves a portable note.
-    const instance = await env.TASKS.get(`task-${t.id}-e${t.epoch}`).catch(() => null);
+    const { taskWorkflowId } = await import("./names");
+    const instance = await env.TASKS.get(taskWorkflowId(await objective.generation(), t.id, t.epoch)).catch(() => null);
     await instance?.sendEvent({ type: "pause", payload: { epoch: t.epoch } }).catch(() => undefined);
     return json({ requested: true, epoch: t.epoch });
   }

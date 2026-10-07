@@ -89,7 +89,7 @@ export async function changeContext(env: Env, id: string, body: string, title?: 
     item: id, version: parsed.version, ...radius,
   });
   if (id === "policy/review-routing" && parsed.policy) await objective.setPolicy(parsed.policy as never);
-  try { await env.COMPOSE.create({ id: `compose-ctx-${checkpoint.version}`, params: { objective: "harbor-export", reason: `context ${id} v${parsed.version}` } }); } catch { /* already running */ }
+  try { await env.COMPOSE.create({ id: `compose-${await objective.generation()}-ctx-${checkpoint.version}`, params: { objective: "harbor-export", reason: `context ${id} v${parsed.version}` } }); } catch { /* already running */ }
 
   // Mirror the new version into the context repository so the history is ordinary git.
   const writer = env.COMPUTERS.getByName("context-writer");

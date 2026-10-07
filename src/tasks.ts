@@ -3,7 +3,7 @@
 
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, workspaceRepo } from "./names";
+import { objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
 
 export class TaskError extends Error {
   constructor(readonly code: string, message = code) {
@@ -43,8 +43,14 @@ export async function startTask(env: Env, taskId: string, participantId: string,
     const info = await r.info();
     return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, OBJECTIVE_ID, generation, taskId, epoch), epoch };
   }
-  const workflow = `task-${taskId}-e${epoch}`;
-  await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });
+  const workflow = taskWorkflowId(generation, taskId, epoch);
+  try {
+    await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });
+  } catch (e) {
+    // Never leave an attempt marked running without a workflow behind it.
+    await objective.finishAttempt(taskId, epoch, "failed", `Could not start the workflow: ${String(e).slice(0, 200)}`);
+    throw new TaskError("WORKFLOW_START_FAILED", String(e).slice(0, 300));
+  }
   return { repo, epoch, workflow };
 }
 
@@ -69,7 +75,7 @@ export async function stopTask(env: Env, taskId: string) {
     await computer.destroy("stopped by the owner").catch(() => undefined);
   }
   await objective.finishAttempt(taskId, t.epoch, "failed", "Stopped by the owner");
-  const instance = await env.TASKS.get(`task-${taskId}-e${t.epoch}`).catch(() => null);
+  const instance = await env.TASKS.get(taskWorkflowId(await objective.generation(), taskId, t.epoch)).catch(() => null);
   await instance?.terminate().catch(() => undefined);
   return { stopped: taskId, epoch: t.epoch, published };
 }
