@@ -11,12 +11,15 @@ const PRICES: Record<string, { in: number; out: number }> = {
   "anthropic/claude-opus-5.5": { in: 4, out: 20 },
   "@cf/openai/gpt-oss-120b": { in: 0.35, out: 0.75 },
 };
-const FALLBACK = { in: 5, out: 25 };
+// Far above any listed price, so a reservation for an unlisted model is still an upper bound. Agents
+// never reach it: Outbound only lets them call the configured, priced models.
+const FALLBACK = { in: 30, out: 150 };
 
-/** Micro-USD per token. Unknown models are charged at the most expensive known rate. */
+export const isPriced = (model: string) => Object.hasOwn(PRICES, model);
+
+/** Micro-USD per token, by exact model id. */
 export function priceFor(model: string): { inPerToken: number; outPerToken: number } {
-  const key = Object.keys(PRICES).find((k) => model === k || model.endsWith(`/${k}`) || model.endsWith(k));
-  const p = key ? PRICES[key]! : FALLBACK;
+  const p = isPriced(model) ? PRICES[model]! : FALLBACK;
   return { inPerToken: p.in, outPerToken: p.out };
 }
 

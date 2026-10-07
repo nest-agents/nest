@@ -7,7 +7,7 @@ import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
 import { candidateBranch, contextRepo, objectiveStub, parseWorkspaceRepo, projectRepo } from "./names";
-import { estimateCost, priceFor, providerTarget } from "./models";
+import { estimateCost, isPriced, priceFor, providerTarget } from "./models";
 import { receivePackRefs } from "./gitproto";
 
 /**
@@ -378,6 +378,9 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     let parsed: Record<string, unknown>;
     try { parsed = JSON.parse(await request.text()) as Record<string, unknown>; } catch { return deny("model requests must be JSON"); }
     const model = String(parsed.model ?? "unknown");
+    // Agents may call only the model configured for their provider, and only a priced one.
+    const configured = provider === "openai" ? this.env.AGENT_MODEL_OPENAI : this.env.AGENT_MODEL_ANTHROPIC;
+    if (model !== configured || !isPriced(model)) return deny(`model ${model} is not allowed for agents`);
     // Clamp the output budget in the request itself, so the reservation below is a true upper bound.
     const CAP = 32_000;
     const field = rest === "responses" ? "max_output_tokens" : provider === "openai" ? "max_completion_tokens" : "max_tokens";
