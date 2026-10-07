@@ -46,3 +46,29 @@ export async function startTask(env: Env, taskId: string, participantId: string,
   await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo } });
   return { repo, epoch, workflow };
 }
+
+/**
+ * Stops a task's current attempt from outside: the agent is killed, committed work is pushed and
+ * registered, the attempt is closed and its workflow ends. Also the recovery path for a stuck attempt.
+ */
+export async function stopTask(env: Env, taskId: string) {
+  const objective = objectiveStub(env);
+  const t = await objective.task(taskId);
+  if (!t) throw new TaskError("NOT_FOUND");
+  if (t.status !== "running") throw new TaskError("NOT_RUNNING");
+  let published: unknown[] = [];
+  if (t.participant && t.repo) {
+    const computer = env.COMPUTERS.getByName(`agent-${taskId}-e${t.epoch}`);
+    const stopped = await computer.stopAgent().catch(() => ({ uncommitted: "", head: "" }));
+    if (stopped.head) {
+      await computer.exec(["bash", "-lc", "git push --quiet origin HEAD:main || true"], "/workspace/repo").catch(() => undefined);
+      const { ingestPush } = await import("./ingest");
+      published = await ingestPush(env, t.repo, stopped.head).catch(() => []);
+    }
+    await computer.destroy("stopped by the owner").catch(() => undefined);
+  }
+  await objective.finishAttempt(taskId, t.epoch, "failed", "Stopped by the owner");
+  const instance = await env.TASKS.get(`task-${taskId}-e${t.epoch}`).catch(() => null);
+  await instance?.terminate().catch(() => undefined);
+  return { stopped: taskId, epoch: t.epoch, published };
+}

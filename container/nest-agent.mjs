@@ -116,7 +116,8 @@ for (let turn = 1; turn <= MAX_TURNS && !finished; turn++) {
     }
     let result;
     try { result = await call(tc.function.name, args); } catch (e) { result = `error: ${e.message}`; }
-    emit("tool", { turn, name: tc.function.name, args: JSON.stringify(args).slice(0, 300), result: String(result).slice(0, 300) });
+    const detail = tc.function.name === "run" ? String(args.command ?? "") : String(args.path ?? "");
+    emit("tool", { turn, name: tc.function.name, detail: detail.slice(0, 200), result: String(result).slice(0, 300) });
     messages.push({ role: "tool", tool_call_id: tc.id, content: String(result).slice(0, 20_000) });
   }
 }

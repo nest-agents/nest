@@ -124,6 +124,13 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json({ requested: true, epoch: t.epoch });
   }
 
+  const stop = /^\/api\/tasks\/(t_[a-z0-9-]{1,48})\/stop$/.exec(url.pathname);
+  if (stop && request.method === "POST") {
+    require(p, "owner");
+    const { stopTask } = await import("./tasks");
+    return json(await stopTask(env, stop[1]!));
+  }
+
   if (route === "POST /api/publish") {
     require(p, "owner", "task");
     const b = await body<{ repo: string; commit: string }>(request);

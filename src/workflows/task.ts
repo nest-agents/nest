@@ -122,14 +122,18 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         const fresh = lines.slice(offset);
         const notable: string[] = [];
         for (const line of fresh) {
+          // Progress lines come from the container: parse defensively and never fail the step on them.
           let ev: Record<string, unknown>;
           try { ev = JSON.parse(line); } catch { continue; }
+          if (!ev || typeof ev !== "object") continue;
           const item = ev.item as Record<string, unknown> | undefined;
-          if (ev.type === "tool" && ev.name === "run") notable.push(`ran ${String(JSON.parse(String(ev.args ?? "{}")).command ?? "").slice(0, 80)}`);
-          else if (ev.type === "tool" && ev.name === "write_file") notable.push(`wrote ${String(JSON.parse(String(ev.args ?? "{}")).path ?? "")}`);
+          const detail = String(ev.detail ?? "").slice(0, 80);
+          if (ev.type === "tool" && ev.name === "run") notable.push(`ran ${detail}`);
+          else if (ev.type === "tool" && ev.name === "write_file") notable.push(`wrote ${detail}`);
           else if (ev.type === "finish") notable.push(`finished: ${String(ev.summary ?? "").slice(0, 160)}`);
+          else if (ev.type === "model_error") notable.push(`hit a model error (${String(ev.status ?? "")})`);
           else if (item?.type === "command_execution") notable.push(`ran ${String(item.command ?? "").slice(0, 80)}`);
-          else if (item?.type === "file_change") notable.push(`changed ${JSON.stringify(item.changes ?? "").slice(0, 80)}`);
+          else if (item?.type === "file_change") notable.push(`changed files`);
         }
         for (const n of notable.slice(-3)) await objective.log("Containers", "progress", `${setup.who.name} ${n}`, { task: tid, epoch });
         return { state: st.state, exitCode: st.exitCode ?? null, offset: lines.length, tail: st.tail ?? "" };
