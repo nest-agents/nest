@@ -24,7 +24,11 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 
   Repo-scoped Artifacts tokens are minted and held in the computer's Durable Object, never inside the container.
 - **Runners.** A runner loses all git access the moment candidate code starts, because the trusted server may host hostile code. Git is allowed only while the phase is explicitly "compose".
-- **Models.** Only agent computers may call models, and only the generation endpoints (`responses`, `chat/completions`). The output budget is clamped in the request body, so each reservation is a true upper bound. Settlement reads only the provider's structured usage object, so model-written text cannot lower a recorded cost.
+- **Models.** Only agent computers may call models, and only the generation endpoints (`responses`, `chat/completions`).
+  - Each agent may call only the model configured for its provider, and only if that model has an exact price.
+  - Fields that would change the model or the bill beyond tokens are removed or clamped before forwarding: fallback model lists, provider routing, priority tiers, multiple completions and paid hosted tools. The forwarded body is the re-serialized object that was checked.
+  - The output budget is clamped in the request body, so each reservation is a true upper bound.
+  - Settlement reads only the provider's structured usage object, so model-written text cannot lower a recorded cost.
 
 **Checks run outside the candidate.**
 - A trusted server hosts the candidate in its container. The checks run in the Worker and judge HTTP responses only, so a candidate cannot print a forged verdict.
@@ -76,6 +80,7 @@ A background security reviewer audited every commit. Each finding was fixed with
 - spend replay;
 - injection guard bypasses (truncation, look-alikes, comments);
 - stale identities across resets;
-- superseding another participant's work.
+- superseding another participant's work;
+- an unpriced model or a fallback model list escaping the spend reservation.
 
 The commit history records each fix.
