@@ -26,15 +26,15 @@ export async function exportByClick(
     const files: string[] = [];
     const unread: { url: string; headers: Record<string, string> }[] = [];
     page.on("response", async (r) => {
+      // Preflights carry no file, and a blob: or data: download replays a response already seen.
+      if (r.request().method() === "OPTIONS" || !/^https?:/.test(r.url())) return;
       const type = r.headers()["content-type"] ?? "";
       const attachment = /attachment/i.test(r.headers()["content-disposition"] ?? "");
       if (!type.startsWith("text/csv") && !attachment) return;
-      try {
-        files.push(await r.text());
-      } catch {
-        // A navigation that becomes a download has no readable body; fetch it again the same way.
-        unread.push({ url: r.url(), headers: r.request().headers() });
-      }
+      const body = await r.text().catch(() => "");
+      // A navigation that becomes a download has no readable body; fetch it again the same way.
+      if (body) files.push(body);
+      else unread.push({ url: r.url(), headers: r.request().headers() });
     });
     await page.goto(previewUrl, { waitUntil: "networkidle0", timeout: 15_000 });
     if (await page.$("#viewer")) await page.select("#viewer", VIEWER);
