@@ -119,7 +119,7 @@ function render() {
   $("#headVer").textContent = S.head ? `checkpoint ${S.head.version}` : "not seeded";
   const people = S.participants.filter((p) => p.kind === "person").length;
   $("#peopleCount").textContent = people;
-  $("#peopleNoun").textContent = people === 1 ? "person" : "people";
+  $("#peopleNoun").textContent = people === 1 ? "person," : "people,";
   $("#agentCount").textContent = S.participants.filter((p) => p.kind === "agent").length;
   $("#spend").textContent = `$${(S.spend.usedMicroUsd / 1e6).toFixed(2)}`;
   $("#signInBtn").textContent = owner() ? "Signed in" : "Sign in";
@@ -264,7 +264,7 @@ function renderMap() {
     const shape = person ? `<rect class="body" x="-10.5" y="-10.5" width="21" height="21" rx="4.5"/>` : `<circle class="body" r="11.5"/>`;
     const mark = st === "blocked" || st === "changes" ? `<line class="mark" x1="-15" y1="15" x2="15" y2="-15" opacity="0.7"/>` : "";
     const ini = esc(nameOf(c.author)[0] ?? "?");
-    const label = `${c.title}, by ${nameOf(c.author)}. ${{ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", stale: "Relied on old context", accepted: "Accepted", superseded: "Superseded" }[st] ?? st}`;
+    const label = `${c.title}, by ${nameOf(c.author)}. ${{ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", stale: "Relied on old context", accepted: "Accepted", superseded: "Retired" }[st] ?? st}`;
     out.push(`<g class="node st-${st} ${sel === c.id ? "sel" : ""}" data-id="${esc(c.id)}" transform="translate(${p.x},${p.y})" tabindex="0" role="button" aria-label="${esc(label)}">${asks.has(c.id) ? `<circle class="ask" r="22"/>` : ""}${picks.has(c.id) ? `<circle class="ring" r="17"/>` : ""}${shape}${mark}<text class="ini">${ini}</text><text class="nid" y="-18">${esc(short(c.id))}</text>${ticks}</g>`);
   }
   svg.innerHTML = out.join("");
@@ -386,7 +386,8 @@ function inspectHtml() {
     const p = who(c.author);
     return `<div class="card"><div class="row"><span class="who"><span class="glyph ${p?.kind ?? "agent"}">${esc(nameOf(c.author)[0])}</span><b>${esc(nameOf(c.author))}</b><span>${esc(p?.model ?? "")}</span></span></div>
       <h4>${esc(c.title)}</h4>
-      <dl class="kv"><dt>Contribution</dt><dd class="id">${esc(c.id)}</dd><dt>Status</dt><dd>${esc(isStale(c) ? "Relied on old context" : c.status)}</dd>
+      <dl class="kv"><dt>Contribution</dt><dd class="id">${esc(c.id)}</dd><dt>Status</dt><dd>${esc(isStale(c) ? "Relied on old context" : ({ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", accepted: "Accepted", superseded: "Retired" }[c.status] ?? c.status))}</dd>
+      ${c.flags?.length ? `<dt>Why</dt><dd>${c.flags.map(esc).join("<br>")}</dd>` : ""}
       <dt>Task</dt><dd>${esc(S.tasks.find((t) => t.id === c.task)?.title ?? c.task)}, attempt ${c.epoch}</dd>
       <dt>Depends on</dt><dd>${c.requires.length ? c.requires.map((r) => `<span class="id">${esc(short(r))}</span> ${esc(S.contributions.find((x) => x.id === r)?.title ?? "")}`).join("<br>") : "Nothing beyond the checkpoint"}</dd>
       ${c.alternative ? `<dt>Alternative in</dt><dd>${esc(c.alternative)}</dd>` : ""}

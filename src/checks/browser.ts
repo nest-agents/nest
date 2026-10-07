@@ -2,7 +2,7 @@
 // picks a viewer, clicks Export CSV and waits for the file. The file is judged by the same trusted rules
 // as the HTTP checks, so the button only passes if clicking it gives that viewer exactly their export.
 
-import puppeteer from "@cloudflare/puppeteer";
+import puppeteer, { type Page } from "@cloudflare/puppeteer";
 import { exportProblems } from "./harbor";
 
 export type ClickCheck = { id: "export-click"; status: "PASS" | "FAIL" | "ERROR"; detail: string };
@@ -22,7 +22,7 @@ export async function exportByClick(
   try {
     browser = await puppeteer.launch(env.BROWSER);
     const page = await browser.newPage();
-    await page.setViewport({ width: 1100, height: 720, deviceScaleFactor: 1 });
+    await page.setViewport({ width: 720, height: 520, deviceScaleFactor: 2 });
     const files: string[] = [];
     const unread: { url: string; method: string; headers: Record<string, string> }[] = [];
     page.on("response", async (r) => {
@@ -67,9 +67,11 @@ export async function exportByClick(
   }
 }
 
-async function shot(page: { screenshot(o: { type: "png" }): Promise<unknown> }): Promise<Uint8Array | null> {
+/** The page's own content, not the empty viewport around it, so the card shows something readable. */
+async function shot(page: Page): Promise<Uint8Array | null> {
   try {
-    const b = await page.screenshot({ type: "png" });
+    const el = (await page.$("main")) ?? (await page.$("body"));
+    const b = el ? await el.screenshot({ type: "png" }) : await page.screenshot({ type: "png" });
     return b instanceof Uint8Array ? b : new Uint8Array(b as ArrayBuffer);
   } catch {
     return null;

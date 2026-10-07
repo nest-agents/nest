@@ -153,7 +153,8 @@ button { cursor: pointer; }
 .st-approved .ini { fill: var(--panel); }
 .st-changes .body, .st-blocked .body, .st-superseded .body { fill: var(--panel); stroke: var(--muted); }
 .st-changes .ini, .st-blocked .ini, .st-superseded .ini { fill: var(--muted); }
-.st-superseded { opacity: 0.55; }
+.st-superseded { opacity: 0.42; }
+.st-superseded .body { stroke-dasharray: 2.5 2; }
 .st-stale .body { fill: url(#hatch); stroke: var(--text); stroke-dasharray: 3 2; }
 .st-stale .ini { fill: var(--text); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
 .st-accepted .body { fill: var(--ink); stroke: var(--ink); }

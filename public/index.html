@@ -24,7 +24,7 @@
     <nav class="crumbs" aria-label="Location"><span id="projectName">Harbor</span><span class="sep">/</span><strong id="objectiveTitle">Loading</strong></nav>
     <div class="top-right">
       <span class="chip head" id="headChip">Accepted <b id="headVer">checkpoint -</b></span>
-      <span class="chip"><b id="peopleCount">0</b> <span id="peopleNoun">people</span>, <b id="agentCount">0</b> <span id="agentNoun">agents</span></span>
+      <span class="chip"><b id="peopleCount">0</b><span id="peopleNoun">people,</span><b id="agentCount">0</b><span>agents</span></span>
       <span class="chip" id="spendChip" title="Model spend so far, against the cap">Spend <b id="spend">$0.00</b></span>
       <span class="chip live" id="liveChip"><span class="dot"></span><span id="liveText">Connecting</span></span>
       <button class="btn small" id="signInBtn" type="button">Sign in</button>
@@ -58,6 +58,7 @@
         <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--neutral)"/></svg>Approved</span>
         <span><svg viewBox="0 0 14 14"><defs><pattern id="lh" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="3" class="hatch-line"/></pattern></defs><circle cx="7" cy="7" r="5.5" fill="url(#lh)" stroke="var(--text)" stroke-dasharray="2 1.5"/></svg>Relied on old context</span>
         <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--ink)"/></svg>Accepted</span>
+        <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="2.5 2" opacity="0.6"/></svg>Retired</span>
         <span><svg viewBox="0 0 14 14"><path d="M1 10 C5 2, 9 2, 13 10" fill="none" stroke="var(--signal)" stroke-width="2.4"/></svg>Selected outcome</span>
       </div>
       <div class="panel-head" style="padding-top:4px"><h2>Activity</h2><span class="aside">the Cloudflare service doing the work</span></div>
