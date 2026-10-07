@@ -20,6 +20,31 @@ const ISSUES = [
 const VIEWERS = ["demo-alice", "demo-bob"] as const;
 const visible = (v: string) => ISSUES.filter((i) => (i.visibleTo as readonly string[]).includes(v));
 
+export const HARBOR_VIEWERS = VIEWERS;
+
+/** What is wrong with one viewer's export file, judged against the trusted fixture and the column policy. */
+export function exportProblems(v: string, text: string, columns: string[]): { columns: string[]; format: string[] } {
+  const col: string[] = [];
+  const fmt: string[] = [];
+  let rows: string[][];
+  try { rows = parseCsv(text); } catch (e) { return { columns: col, format: [`${v}: ${(e as Error).message}`] }; }
+  const [header, ...body] = rows;
+  if (JSON.stringify(header) !== JSON.stringify(columns)) col.push(`${v}: header ${JSON.stringify(header)}; expected ${JSON.stringify(columns)}`);
+  const want = visible(v);
+  if (body.length !== want.length) col.push(`${v}: ${body.length} rows; expected ${want.length}`);
+  want.forEach((issue, k) => {
+    const r = body[k];
+    if (!r) return;
+    columns.forEach((name, c) => {
+      const expected = String((issue as Record<string, unknown>)[name] ?? "");
+      if (r[c] !== expected) fmt.push(`${v} ${issue.id}.${name}: ${JSON.stringify(r[c])} != ${JSON.stringify(expected)}`);
+    });
+  });
+  if (!columns.includes("internal_notes"))
+    for (const i of ISSUES) if (text.includes(i.internal_notes)) col.push(`${v}: export leaks internal_notes of ${i.id}`);
+  return { columns: col, format: fmt };
+}
+
 /** Strict RFC 4180: CRLF record separators, quoted fields, doubled quotes. */
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -136,22 +161,9 @@ export async function runHarborChecks(call: Call, policy: HarborPolicy, actualDa
   for (const v of VIEWERS) {
     const text = files[v];
     if (text === undefined) { colProblems.push(`${v}: no export file`); fmtProblems.push(`${v}: no export file`); continue; }
-    let rows: string[][];
-    try { rows = parseCsv(text); } catch (e) { fmtProblems.push(`${v}: ${(e as Error).message}`); continue; }
-    const [header, ...body] = rows;
-    if (JSON.stringify(header) !== JSON.stringify(columns)) colProblems.push(`${v}: header ${JSON.stringify(header)}; expected ${JSON.stringify(columns)}`);
-    const want = visible(v);
-    if (body.length !== want.length) colProblems.push(`${v}: ${body.length} rows; expected ${want.length}`);
-    want.forEach((issue, k) => {
-      const r = body[k];
-      if (!r) return;
-      columns.forEach((name, c) => {
-        const expected = String((issue as Record<string, unknown>)[name] ?? "");
-        if (r[c] !== expected) fmtProblems.push(`${v} ${issue.id}.${name}: ${JSON.stringify(r[c])} != ${JSON.stringify(expected)}`);
-      });
-    });
-    if (!columns.includes("internal_notes"))
-      for (const i of ISSUES) if (text.includes(i.internal_notes)) colProblems.push(`${v}: export leaks internal_notes of ${i.id}`);
+    const p = exportProblems(v, text, columns);
+    colProblems.push(...p.columns);
+    fmtProblems.push(...p.format);
   }
   record("export-columns", colProblems.length ? "FAIL" : "PASS", colProblems.join("; ") || `columns ${columns.join(",")}`);
   record("csv-format", fmtProblems.length ? "FAIL" : "PASS", fmtProblems.slice(0, 6).join("; ") || "RFC 4180 with exact field values");

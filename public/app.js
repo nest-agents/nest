@@ -312,6 +312,13 @@ function reviewHtml(r) {
     <div class="meta">${p?.kind === "agent" ? `<span>Confidence ${Number(r.confidence).toFixed(2)}</span>` : ""}</div></div>`;
 }
 
+/** What a real browser saw after clicking Export CSV on this outcome's preview. */
+function shotHtml(c) {
+  const click = c.checks.find((k) => k.id === "export-click");
+  if (!click || click.status === "ERROR") return "";
+  return `<figure class="shot"><img src="/shots/${esc(c.id)}.png" alt="The outcome's page after a browser clicked Export CSV" loading="lazy" width="1100" height="720"><figcaption>${esc(click.detail)}</figcaption></figure>`;
+}
+
 function checksHtml(c) {
   if (!c.checks.length) return `<div class="checks"><span style="font-size:12.5px;color:var(--muted)">Checks not run yet</span></div>`;
   const pass = c.checks.filter((k) => k.status === "PASS").length;
@@ -363,6 +370,7 @@ function outcomesHtml() {
     <div class="row"><span class="id" style="color:var(--muted)">${esc(c.id)}</span><span style="font-size:12.5px;color:var(--muted)">on checkpoint ${c.baseVersion}</span></div>
     ${checksHtml(c)}${c.checks.filter((k) => k.status !== "PASS").sort((a, b) => Number(b.atHead === "PASS") - Number(a.atHead === "PASS")).map((k) => `<div class="fail-line ${k.atHead === "PASS" ? "" : "todo"}"><b>${esc(k.id)}</b> ${k.atHead === "PASS" ? "Broken: passes on the checkpoint, fails here. " : k.atHead ? "Not done yet. " : ""}${esc(k.detail)}</div>`).join("")}
     ${c.conflict ? `<div class="fail-line">${esc(c.conflict)}</div>` : ""}
+    ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
     <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`).join("");

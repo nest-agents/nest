@@ -3,6 +3,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { ArtifactsClient } from "../artifacts";
+import { exportByClick } from "../checks/browser";
 import { HARBOR_CHECKS, runHarborChecks } from "../checks/harbor";
 import { candidateBranch, objectiveStub, projectRepo, projectStub, short } from "../names";
 import { sha256Hex } from "../protocol";
@@ -52,7 +53,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
     // unfinished; one that fails a check the checkpoint passes has broken something.
-    const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}`;
+    // The key names the check set too, so adding a check re-measures the checkpoint.
+    const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}:${[...HARBOR_CHECKS, "export-click"].length}`;
     // Generous retries: right after a deploy, Durable Objects can run the previous code for a minute or more.
     const baseline = await step.do(`measure checkpoint ${plan.head.version}`, { retries: { limit: 5, delay: "20 seconds", backoff: "linear" }, timeout: "10 minutes" }, async () => {
       const known = await objective.baseline(baselineKey);
@@ -71,7 +73,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const data = await artifacts.readBytes(projectRepo(this.env), plan.head.commit, "src/data.ts");
         const call = (path: string, viewer: string | null, method = "GET") =>
           computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
-        const checks = await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, data ? await sha256Hex(data) : "missing", 25_000);
+        const checks = [
+          ...(await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, data ? await sha256Hex(data) : "missing", 25_000)),
+          (await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${id}/`, plan.columns, (path, viewer) => call(path, viewer))).check,
+        ];
         await objective.setBaseline(baselineKey, checks);
         await objective.log("Sandbox", "baseline", `Checkpoint ${plan.head.version} passes ${checks.filter((k) => k.status === "PASS").length} of ${checks.length} checks on its own`);
         return checks;
@@ -116,9 +121,15 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const actual = candidateData ? await sha256Hex(candidateData) : "missing";
         const call = (path: string, viewer: string | null, method = "GET") =>
           computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
-        const checks = served.ok
+        const checks: { id: string; status: string; detail: string }[] = served.ok
           ? await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, actual, 25_000)
           : HARBOR_CHECKS.map((id) => ({ id, status: "ERROR" as const, detail: `candidate did not start: ${served.detail}`.slice(0, 500) }));
+        if (served.ok) {
+          // A real browser clicks the button on the live preview; the screenshot goes on the outcome card.
+          const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer) => call(path, viewer));
+          checks.push(click.check);
+          if (click.screenshot) await this.env.OBJECTS.put(`shots/${c.id}.png`, click.screenshot, { httpMetadata: { contentType: "image/png" } });
+        }
         const failed = checks.filter((x) => x.status !== "PASS");
         const state = await objective.state();
         const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");

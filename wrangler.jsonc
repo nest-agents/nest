@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "upload_source_maps": true,
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp", "/preview/*"] },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp", "/preview/*", "/shots/*"] },
 
   "vars": {
     "ACCOUNT_ID": "461aad8037e6c7bda5bac789d1393a75",
@@ -20,7 +20,8 @@
     "REVIEW_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
     "REVIEW_MODEL_WORKERS_AI": "@cf/openai/gpt-oss-120b",
     "SPEND_CAP_MICRO_USD": "50000000",
-    "AUTO_REPAIR_AGENT": "kestrel"
+    "AUTO_REPAIR_AGENT": "kestrel",
+    "PUBLIC_URL": "https://nestagents.dev"
   },
 
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "nest" }],
@@ -67,7 +68,6 @@
   "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "nest-objects" }],
   "ai": { "binding": "AI" },
   "browser": { "binding": "BROWSER" },
-  "worker_loaders": [{ "binding": "LOADER" }],
   "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "nest_events" }],
 
   "secrets": { "required": ["NEST_OWNER_TOKEN", "NEST_SIGNING_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"] }

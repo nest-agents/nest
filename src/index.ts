@@ -55,6 +55,13 @@ export default {
     try {
       if (url.pathname === "/mcp") return await handleMcp(request, env, ctx);
       if (url.pathname.startsWith("/preview/")) return await preview(request, env, url);
+      const shotPath = /^\/shots\/(k[0-9a-f]{10})\.png$/.exec(url.pathname);
+      if (shotPath) {
+        // What the browser check saw after clicking Export CSV. Public, like previews.
+        const shot = await env.OBJECTS.get(`shots/${shotPath[1]}.png`);
+        if (!shot) return new Response("Not found", { status: 404 });
+        return new Response(shot.body, { headers: { "content-type": "image/png", "x-content-type-options": "nosniff", "cache-control": "public, max-age=60" } });
+      }
       if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
       const principal = await authenticate(env, request);
       if (!principal) return fail(401, "BAD_TOKEN");
@@ -125,6 +132,15 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
       if (adds.length) { await objective.setAdds(c.id, adds); backfilled.push(c.id); }
     }
     return json({ backfilled, reviews: await ensureReviews(env, OBJECTIVE_ID) });
+  }
+
+  if (route === "POST /api/admin/recompose") {
+    require(p, "owner");
+    const b = await body<{ ids: string[] }>(request);
+    await objective.markCandidatesOutdated((b.ids ?? []).filter((x) => /^k[0-9a-f]{10}$/.test(x)));
+    const id = `compose-${Date.now()}`;
+    await env.COMPOSE.create({ id, params: { objective: OBJECTIVE_ID, reason: "owner asked to recompose" } });
+    return json({ workflow: id });
   }
 
   if (route === "POST /api/admin/computers/destroy") {
