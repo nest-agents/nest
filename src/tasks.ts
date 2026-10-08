@@ -190,6 +190,17 @@ export async function reapAttempts(env: Env, objectiveId: string): Promise<strin
   const reaped: string[] = [];
   for (const t of state.tasks) {
     if (t.status !== "running") continue;
+    // A manual attempt (a human or an outside agent pushing from their own machine) has no workflow to end
+    // it: acceptance of its work does.
+    const who = state.participants.find((p) => p.id === t.participant);
+    if (who && !["codex", "nest-agent"].includes(who.harness)) {
+      if (state.contributions.some((c) => c.task === t.id && c.epoch === t.epoch && c.status === "accepted")) {
+        await objective.finishAttempt(t.id, t.epoch, "done", "its work was accepted");
+        await objective.log("Durable Objects", "attempt-end", `${t.title}: attempt ${t.epoch} done. Its work was accepted`, { task: t.id, epoch: t.epoch });
+        reaped.push(t.id);
+      }
+      continue;
+    }
     const instance = await env.TASKS.get(taskWorkflowId(generation, t.id, t.epoch)).catch(() => null);
     const s = instance ? await instance.status().catch(() => null) : null;
     if (!s || !["errored", "terminated", "complete"].includes(s.status)) continue;
