@@ -1,100 +1,124 @@
 # Demo video: run of show
 
-Target 8 to 9 minutes; the limit is 10. Everything shown is a real run on https://nestagents.dev. A run
-takes about 40 minutes of wall time, mostly agents working and previews building. Record the whole session,
-then cut to the beats below and speed up the waits (label them "4× speed").
+Target 9 minutes; the limit is 10. Everything shown is a real run on https://nestagents.dev. Record one long
+session (about 50 minutes of wall time, most of it agents working and previews building), then cut to the
+beats below and speed up the waits with a visible "4×" label. Nothing is staged, so if something goes wrong
+on camera, keep it: a failed check, a conflict or an undecided review is exactly what Nest is for.
+
+## Why this order
+
+Judges score originality and quality of the prototype (50%), multi-agent concurrency, coordination,
+context, review and conflicts (25%), and UX (25%). The video runs **human mode first**, because that is where
+the decisions and the UX are, then **agents mode** as the payoff, then an **outside agent joining through
+MCP**, then **scale**. Each act answers one judging criterion with a live run, not a slide.
 
 ## Before recording
 
-- Sign in at https://nestagents.dev with the owner token. The Sign in button turns into "Signed in".
-- Browser at 1600 × 1000 or larger, light mode, notifications off. Zoom to 110% if text looks small.
-- Open three tabs:
-  1. https://beacon.nestagents.dev (production);
-  2. https://nestagents.dev/p/beacon;
-  3. the new objective, once created.
-- Check spend in the header. A run costs about $6.
+- Sign in at https://nestagents.dev with the owner token; the button reads "Signed in".
+- Browser 1600 × 1000 or larger, light mode, notifications off, bookmarks bar hidden. Zoom 110%.
+- Tabs ready: beacon.nestagents.dev (production), nestagents.dev/p/beacon, a terminal with Claude Code or
+  Codex configured against `https://nestagents.dev/mcp` with an invite token (see act 5).
+- Raise the AI Gateway daily limit to $75 and `SPEND_CAP_MICRO_USD` to 120000000 for the day. A full
+  recording costs about $10.
+- Create the objective and context below **just before** recording, not earlier: the tasks are consumed
+  once accepted.
 
-## The objective to run
+## The objective (act 2)
 
-Create it from the project page (New objective):
-
-- **Id:** `beacon-open`
-- **Title:** `Beacon that other tools can build on`
-- **Done when:**
-  - `/api/status carries each service's uptime and open incident`
-  - `An incident feed other tools can subscribe to`
-  - `The page says plainly when there have been no incidents`
-
-Add one requirement first (Add to context, kind Requirement):
+From the Beacon project page, Add to context, kind Requirement:
 
 - **Short name:** `incident-feed`
 - **Title:** `Incidents are published as an Atom feed`
-- **Text:** `/incidents.atom is a valid Atom 1.0 feed of incidents opened in the last 30 days, newest first: one
-  entry per incident with the service name, when it opened, when it closed (or that it is ongoing) and the
-  error that opened it. Feed readers can poll it every minute.`
+- **Text:** `/incidents.atom is a valid Atom 1.0 feed of incidents opened in the last 30 days, newest first:
+  one entry per incident with the service name, when it opened, when it closed (or that it is ongoing) and
+  the error that opened it. Feed readers can poll it every minute.`
 
-Then create these tasks (New task), and start each on the agent shown:
+New objective:
 
-| Task id | Title | Brief (outcome, not steps) | Group | Agent |
+- **Id:** `beacon-open`
+- **Title:** `Beacon that other tools can build on`
+- **Done when:** `/api/status carries each service's open incident` · `An incident feed other tools can
+  subscribe to` · `The page says plainly when there have been no incidents`
+
+Tasks (New task), started on the agent shown:
+
+| Task id | Title | Brief | Group | Agent |
 |---|---|---|---|---|
-| `t_api` | Put uptime and incidents in /api/status | Implement req/api: each service carries its 24-hour uptime and its open incident if any. Document the fields in the README. | | Finch |
-| `t_feed-builder` | Atom feed, built as text | Implement req/incident-feed by rendering the XML yourself in a pure module, escaping every value. | `feed` | Kestrel |
-| `t_feed-library` | Atom feed, from a typed model | Implement req/incident-feed by building a typed feed model, then serializing it in one place, with tests that parse the output. | `feed` | Wren |
-| `t_empty-state` | Say when there have been no incidents | When no incident opened in the last 7 days, the page says so in a sentence. | | Heron |
+| `t_api-incident` | Put each service's open incident in /api/status | Implement the rest of req/api: each service in /api/status carries its open incident (or null) with when it opened and the error. Document the fields in the README. | | Finch |
+| `t_feed-builder` | Atom feed, built as text | Implement req/incident-feed by rendering the XML yourself in a pure module that escapes every value, with tests. | `feed` | Kestrel |
+| `t_feed-model` | Atom feed, from a typed model | Implement req/incident-feed by building a typed feed model and serializing it in one place, with tests that parse the output back. | `feed` | Wren |
+| `t_empty-state` | Say when there have been no incidents | When no incident opened in the last 7 days, the page says so in one sentence instead of showing nothing. | | Heron |
 
 ## Beats
 
-1. **0:00 – 0:40. What Nest is.**
-   - Show Beacon in production: "This is Beacon, an uptime monitor checking real services every minute. Its
-     history, incidents and badges were built by agents in Nest."
-   - Cut to the Nest home page: "Nest is where humans and agents build software together on Cloudflare."
-2. **0:40 – 1:30. A project.**
-   - Open Beacon's project page and point at three things:
-     - the requirements, "versioned like code";
-     - How Nest checks it, `npm test`, `tsc` and a Preview of every branch, read from `.nest/project.json`;
-     - the checkpoint history.
-   - Say: "The repository lives in Cloudflare Artifacts. Accepted work deploys through Workers Builds."
-3. **1:30 – 2:15. A human sets the direction.**
-   - Add the `incident-feed` requirement and create the objective and the four tasks.
-   - Point at the two feed tasks in group `feed`: "Two agents will build the same thing two different ways.
-     I'll choose later, between working results."
-4. **2:15 – 3:30. Four agents at once.**
-   - Start the four tasks and stay on the work map.
-   - Contributions arrive in each lane as agents push, with review ticks under each node as two reviewers from
-     other model families read them: Owl (Claude), Shrike (OpenAI), Kite (DeepSeek), and Tern (GLM) when
-     they need a fourth opinion.
-   - Open one contribution in the Inspector: its message, what it cites, its files, its reviews.
-5. **3:30 – 4:30. Only what needs a human reaches a human.**
-   - Open Needs you, where whatever came up waits: typically a protected file (`package.json`), a low-confidence
-     review, or a conflict.
-   - Settle it on camera, either with "Approve" and a sentence, or with "Reconcile with an agent" on a conflict.
-6. **4:30 – 6:00. Whole outcomes, checked as a whole.**
-   - Open Outcomes. Each card is a combination of everyone's work, cherry-picked with real git onto the
-     checkpoint.
-   - Show its checks: compose, `npm test`, `tsc`, and preview.
-   - Show the screenshot of what a real browser saw on that outcome's own Preview deployment, and choose Open
-     preview.
-   - If an outcome says "Breaks a check", show the failing output and Repair with an agent.
-7. **6:00 – 7:00. Context that compounds.**
-   - In the context rail, open `req/incident-feed` and propose version 2: "...newest first, at most 50 entries."
-   - Accept it. The map ripples from the requirement to every contribution that cited version 1, those
-     outcomes become outdated, and Nest recomposes.
-   - Say: "Agents cite what they relied on, so a changed requirement shows exactly what it touches."
-8. **7:00 – 8:00. A decision, kept.**
-   - Accept the outcome with the feed approach you prefer, and type the reason.
-   - Show the retired approach in the map and its note under Rejected approaches: "Every later agent gets
-     this reason in its context pack."
-   - The activity log shows the compare-and-swap and Beacon's `main` fast-forwarding.
-9. **8:00 – 8:40. It shipped.**
-   - Switch to Beacon production and open `/incidents.atom` and `/api/status`.
-   - Say: "Accepted, deployed by Workers Builds, about thirty seconds later."
-10. **8:40 – 9:15. On Cloudflare.**
-    - Over the work map, read the stack: Artifacts for every repository and fork; Durable Objects for the
-      registry, the head and each objective; Workflows; Containers for agents and checks; Browser Rendering;
-      AI Gateway; Workers Builds and Previews; R2; Workers AI.
-    - Close on the home page.
+### Act 1: what this is (0:00–0:45)
+- Open on **beacon.nestagents.dev**: "A status page checking real services every minute. Its history,
+  incidents, latency and badges were built by agents, reviewed by other agents, and accepted by me, in
+  Nest."
+- Cut to the Nest home page. One sentence: "Nest is where humans and agents build software together, on
+  Cloudflare. The unit of work is a contribution, not a branch; outcomes are assembled from everyone's
+  work; review runs both ways; and context is versioned like code."
+
+### Act 2: human mode (0:45–4:15)
+- Project page: requirements "versioned like code", **How Nest checks it** (`npm test`, `tsc`, a Preview
+  of every outcome), **How work is decided** showing "Ask me when it matters".
+- Add the `incident-feed` requirement, create the objective and the four tasks. Point at the two feed tasks
+  in group `feed`: "Two agents build the same thing two ways. I choose later, between working results."
+- Start all four. Stay on the work map. Contributions land in lanes as agents push; review ticks appear as
+  reviewers from other model families read them. Open one in the Inspector: message, citations, files,
+  reviews.
+- **Needs you.** Settle whatever came up on camera. Expect at least one of: a protected file
+  (`package.json`), a disagreement, or a conflict → "Reconcile with an agent".
+- **Outcomes.** Two whole outcomes, one per feed design, each with compose, `npm test`, `tsc` and a real
+  browser's screenshot of its own Preview. Choose Open preview on one.
+- **Accept** the feed design you prefer and type the reason. Show the retired approach on the map and its
+  note under Rejected approaches: "Every later agent gets this reason in its context pack."
+- Activity log: compare-and-swap, `main` fast-forwarded, "production deploys from main". Switch to
+  beacon.nestagents.dev/incidents.atom. "Accepted, deployed by Workers Builds, about thirty seconds later."
+
+### Act 3: context that compounds (4:15–5:00)
+- In the context rail, open `req/incident-feed`, propose version 2: "…newest first, at most 50 entries,
+  and each entry links to the status page." Accept it.
+- The map ripples from the requirement to every contribution that cited version 1; those outcomes become
+  outdated; Nest recomposes and opens a repair if the accepted checkpoint now fails. "Agents cite what they
+  relied on, so a changed requirement shows exactly what it touches."
+
+### Act 4: agents mode (5:00–6:45)
+- Project page, **How work is decided**: choose "Let agents decide" and "Accept ready outcomes
+  automatically". Save. "This is a versioned policy, like any requirement. Build files and `.nest/` still
+  need me."
+- Start two small tasks (for example `t_feed-limit`: the 50-entry cap from v2; and `t_badge-link`: the
+  badge links to the status page). Stay on the map.
+- Reviews from two families, unanimous → approved with no inbox item → composed → Preview opened by a
+  browser → **"Accepted … automatically, as this project's policy allows"** → production deploys. Nobody
+  clicked.
+- If one task touches a protected file, show it held with the exact reason. "Agents decide what they can;
+  what they can't, waits for a human, and says why."
+
+### Act 5: an outside agent joins through MCP (6:45–7:45)
+- Home page, Invite a human or agent. Create a token for your Claude Code or Codex session.
+- In the terminal: the agent calls `nest_objectives`, `nest_pack`, `nest_claim`, pushes to its own fork with
+  a scoped token, calls `nest_publish`. On the map, its lane appears, and Nest's reviewers review it like
+  anyone else's. "Any agent, any harness, plain git. And agents review humans' work too." (Verified live on
+  2026-10-08: an invited human's push was reviewed by Shrike and Owl and was ready in two minutes.)
+
+### Act 6: scale (7:45–8:30)
+- Cut to the recorded scale run (see below), at speed: N real agents on an imported repository, the map
+  filling, outcomes composing, the inbox showing only what needed a human. Say the numbers from the
+  deployment's own records: agents, contributions, reviews, conflicts, minutes, dollars.
+
+### Act 7: on Cloudflare (8:30–9:00)
+- Over the work map, read the stack: Artifacts for every repository and fork; Durable Objects for the
+  registry, the head and each objective; Workflows; Containers for agents and checks; Browser Rendering;
+  AI Gateway; Workers Builds and Previews; R2; Workers AI. Close on the home page.
+
+## The scale run (recorded separately, before the main recording)
+
+Create a project from a public git URL (a mid-sized TypeScript repository with many independent modules),
+add two requirements, and start 20 to 24 agents on small independent tasks (one module each: tests, docs,
+a small refactor). Let it run 30 minutes. Keep the whole recording; use 30 seconds of it at 16×. Report the
+numbers exactly as the objective page shows them. Budget about $8.
 
 ## If something goes wrong on camera
 
-That is the product working: keep it in. A failed check, a conflict or an undecided review is exactly what
-Nest exists to surface. Settle it in the UI and carry on.
+Keep it in and settle it in the UI. The product's job is to surface exactly that.
