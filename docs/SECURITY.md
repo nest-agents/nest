@@ -114,6 +114,11 @@ run.
 - These go to a human: unusual paths (non-canonical, non-ASCII, trailing dots or spaces, `..`), symlinks,
   submodules, unreadable files and oversized changes.
 
+**A verdict is one object, or none.** A reviewer's reply is parsed for the single top-level JSON object that
+carries the verdict key. A reply with two such objects, which is what an injected verdict quoted in the
+reviewer's prose would produce, is no verdict at all, and the contribution goes on to another reviewer or
+a human.
+
 **Prompt injection is data, then a tripwire.**
 - Participant-written text and check output reach models only inside random-boundary data blocks, with a rule
   that nothing inside is an instruction.

@@ -139,6 +139,8 @@ Inputs: live contributions, their dependencies, groups, and which files each one
 - **Replacements.** A reconcile's work replaces the contribution it re-creates once it is approved. Work
   that depended on the original is carried onto the replacement: git replays its own change on top, and a
   real overlap still shows as a conflict.
+- **What could ship now.** Beside each whole outcome the planner offers its approved part, so work that
+  waits for a human never holds back work that is ready. With auto-accept on, that is what ships.
 - **Ranking.** Whole outcomes come before fragments of other outcomes, then ready before waiting, then the
   most approved. The top three are composed.
 - **Judging.** The checkpoint itself is measured once per context version. An outcome that fails only what
@@ -241,6 +243,22 @@ Each was found in a real run on Cloudflare and is fixed in the commit history.
   previous code. Workflow steps retry for minutes, and missing reviews are reconciled on the next push.
 - **One composer per objective.** Composers started by concurrent reviews raced on the same runner and
   baseline. Now one runs at a time, and requests that arrive meanwhile make it compose again.
+- **One contribution waiting for a human held back everything.** The first auto-review run composed only
+  the whole outcome, so a protected change that needed a human kept three approved changes from shipping.
+  The planner now also offers the approved part, and that is what auto-accept shipped as checkpoint 12.
+- **Reasoning models write prose before the verdict.** GLM and DeepSeek on Workers AI think first, sometimes
+  with braces in the text, and the old parser ("first brace to last brace") threw their verdicts away. The
+  parser now takes the one top-level object that carries the verdict key, and fails closed when two could.
+- **A Preview that never deployed.** Workers Builds created a Preview for one branch and never deployed it,
+  so the branch answered 404 for eight minutes. That is not the code's doing: the outcome is composed again
+  once (a new composition is a new commit, which the pipeline builds afresh), and otherwise stays
+  incomplete with a Compose again button rather than "breaks a check".
+- **Imports land on the source's branch.** An import of a repository whose history is on `master` left
+  `main` empty, and Nest works on `main`. The project's mirror computer now creates `main` from the default
+  branch before the first checkpoint.
+- **A failed mirror never caught up.** If moving `main` failed at acceptance, production stayed on the old
+  checkpoint until the next one. A composer now fast-forwards `main` whenever it finds it behind the head,
+  and every fresh attempt starts from the exact head commit rather than from whatever `main` holds.
 - **A reviewer's family is its lineage, not its host.** Plover ran `gpt-oss` on Workers AI and was counted
   as a third family, but `gpt-oss` is an OpenAI model, so its reviews of Codex-authored work were not
   independent. Plover keeps its identity and past reviews and no longer reviews. Kite (DeepSeek) and Tern

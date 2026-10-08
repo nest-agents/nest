@@ -78,6 +78,20 @@ production and every other branch as a Preview. These numbers are from objective
   later. The run produced 17 contributions, 37 reviews and 10 composed outcomes, in 56 minutes, for $5.66
   of model spend.
 
+**A second run, with agents deciding** (objective `beacon-dialin`, 2026-10-08). The human switched the
+project to "agents decide" and "accept ready outcomes automatically" through the policy form, then started
+three agents: Heron on `X-Robots-Tag: noindex` for previews, Kestrel on p50 and p95 latency, and Finch on a
+new monitor, which edits a protected file.
+- Heron's two commits and Kestrel's pure latency module were approved unanimously by reviewers from other
+  families. Nest composed exactly that approved part, ran the checks, opened the preview in a browser, and
+  accepted checkpoint 12 with no human. Production deployed 27 seconds later.
+- Finch's monitor change reached the human, with the reason: three reviewers approved, but none at the
+  0.9 confidence the policy demands for a protected file. Kestrel's page wiring reached the human too:
+  Shrike found that its label overflowed a 360-pixel phone, and Kite disagreed.
+- The human agreed with Shrike and returned the change. Kestrel re-created it with a wrapping label and a
+  `Nest-Supersedes` trailer; two families approved it; Nest composed it with the monitor change the human
+  had approved and accepted checkpoint 13 automatically. The run cost $2.10.
+
 ## How it uses Cloudflare
 
 | Job | Service |
