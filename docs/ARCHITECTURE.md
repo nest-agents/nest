@@ -294,8 +294,8 @@ Each was found in a real run on Cloudflare and is fixed in the commit history.
 - **Outcomes aged in place when a sibling moved the head.** Objectives share a project, so one objective's
   acceptance moves the head under every other's outcomes. One built on checkpoint 16 still sat on a board
   whose head was 23. A composer now retires every outcome built on an older checkpoint, in whichever
-  objective it finds them; the same work is planned again on the new head under a new id, and the old card
-  says so.
+  objective it finds them; the same work is planned again on the new head under a new id, and the retired
+  record names it.
 - **Packs put the task's files first.** The repository section of a pack read files in a fixed order
   (instructions, source, tests, the rest, alphabetically), so on a 164-module library an agent asked about
   `zip.ts` got `add.ts` through `mapValues.ts` and not its own module. Files the task names now come first.
