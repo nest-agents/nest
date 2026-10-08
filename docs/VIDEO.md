@@ -14,7 +14,7 @@ The target is 8 minutes; the rules allow 5 to 10. Everything below runs live on 
 |---|---|---|---|---|
 | 1 | 0:00 | Work map, live | Let pushes land | "GitHub's unit is the branch. Nest's unit is the contribution. Three agents, two model families, each in its own Artifacts fork, pushing right now." |
 | 2 | 0:40 | Activity log, then a contribution in the Inspector | Click a node | "A push fires an Artifacts event, a Workflow registers it in a Durable Object, and two reviewers from the families that didn't write it read it, with the repository around the change." |
-| 3 | 1:30 | Terminal, then the work map | Claim a task as the person, `git push` | "People are contributors too. I push from my laptop with a token for my fork only. Claude and GPT review my work like anyone else's." |
+| 3 | 1:30 | Terminal, then the work map | Claim a task as the human, `git push` | "Humans are contributors too. I push from my laptop with a token for my fork only. Claude and GPT review my work like anyone else's." |
 | 4 | 2:20 | Needs you | Settle one disagreement with a sentence | "I'm asked only when it matters: reviewers disagree, a guard fires, or an outcome is ready." |
 | 5 | 3:00 | Outcomes | Open the mixed outcome and its preview; click Export CSV | "Nest assembled whole outcomes with real git. This one is Heron's button on Kestrel's API, and no single agent wrote it. Seven trusted checks run outside the candidate, and a real browser clicked Export." |
 | 6 | 4:10 | Accept dialog, then History | Accept with a reason | "Acceptance is a compare-and-swap on the head. My reason becomes context: every later agent reads why the direct approach lost." |

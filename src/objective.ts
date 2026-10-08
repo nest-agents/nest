@@ -1,5 +1,5 @@
 // ObjectiveDO: coordination for one objective. Tasks and fenced attempts, contributions, reviews,
-// the person's inbox, candidate outcomes and a durable event log, with live WebSocket fan-out.
+// the human's inbox, candidate outcomes and a durable event log, with live WebSocket fan-out.
 
 import { DurableObject } from "cloudflare:workers";
 import type { Citation, ParticipantKind, Verdict } from "./protocol";
@@ -325,7 +325,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     for (const d of c.requires) if (!this.contribution(d)) throw new ObjectiveError("MISSING_DEPENDENCY", d);
     if (c.supersedes) {
       // Superseding retires work, so it is only for your own unaccepted work. To replace someone else's
-      // work, publish an alternative and let the person choose.
+      // work, publish an alternative and let the human choose.
       const old = this.contribution(c.supersedes);
       if (!old) throw new ObjectiveError("MISSING_DEPENDENCY", c.supersedes);
       const reconciling = !!c.task && this.taskReplaces(c.task).includes(c.supersedes);
@@ -350,7 +350,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     return { contribution: this.contribution(c.id)!, created: true };
   }
 
-  /** A deterministic concern that no agent review can clear: only a person settles it. */
+  /** A deterministic concern that no agent review can clear: only a human settles it. */
   flagContribution(id: string, reason: string): void {
     const c = this.contribution(id);
     if (!c) throw new ObjectiveError("NOT_FOUND");
@@ -389,7 +389,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     return v ? JSON.parse(v) : null;
   }
 
-  /** A reconcile task's work stands in for these contributions, which a person asked it to integrate. */
+  /** A reconcile task's work stands in for these contributions, which a human asked it to integrate. */
   setTaskReplaces(taskId: string, ids: string[]): void {
     this.setMeta(`replaces:${taskId}`, JSON.stringify(ids));
   }
@@ -442,7 +442,7 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   /**
    * The reviewer must be a registered participant. Kind and family come from the registry, never
-   * from the caller, so a review cannot claim to be a person's or another model family's.
+   * from the caller, so a review cannot claim to be a human's or another model family's.
    */
   addReview(input: Omit<Review, "createdAt" | "kind" | "family">, cites: Citation[] = []): { review: Review; routing: Routing } {
     const target = this.contribution(input.target);
@@ -507,7 +507,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       const open = this.sql.exec<Row>("SELECT status FROM inbox WHERE id = ?", inboxId).toArray()[0];
       if (!open) {
         this.sql.exec("INSERT INTO inbox VALUES (?, 'review', ?, ?, 'open', ?, NULL)", inboxId, contributionId, JSON.stringify(routing.reasons), new Date().toISOString());
-        this.emit("Durable Objects", "inbox", `${c.title}: ${routing.reasons.join("; ")}. Routed to a person`, { inbox: inboxId, target: contributionId });
+        this.emit("Durable Objects", "inbox", `${c.title}: ${routing.reasons.join("; ")}. Routed to a human`, { inbox: inboxId, target: contributionId });
       }
     } else if (routing.state === "approved" || routing.state === "changes" || routing.state === "blocked") {
       this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = ? WHERE id = ? AND status = 'open'", routing.state, inboxId);
@@ -636,7 +636,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       this.sql.exec("UPDATE candidates SET status = 'superseded' WHERE id != ? AND status NOT IN ('accepted', 'superseded')", candidateId);
       for (const id of [candidateId, ...stale]) this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'accepted' WHERE target = ? AND status = 'open'", id);
     });
-    // Work that can never apply is retired with its reason: approaches the person turned down, and work
+    // Work that can never apply is retired with its reason: approaches the human turned down, and work
     // that creates a file the checkpoint now has from someone else. Questions about it leave the inbox.
     const all = this.contributions();
     const owner = new Map<string, string>();

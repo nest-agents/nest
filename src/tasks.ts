@@ -38,7 +38,7 @@ export async function startTask(env: Env, taskId: string, participantId: string,
     : `Forked checkpoint ${head.version} into ${repo}`, { task: taskId, epoch, repo });
 
   if (mode === "manual") {
-    // A person or external agent pushing from their own machine: a short-lived write token for this fork only.
+    // A human or external agent pushing from their own machine: a short-lived write token for this fork only.
     const token = await artifacts.token(repo, "write", 3600);
     using r = await env.ARTIFACTS.get(repo);
     const info = await r.info();
@@ -82,7 +82,7 @@ export async function stopTask(env: Env, taskId: string) {
 }
 
 /**
- * A person turns a conflict into work. The new task's workspace is the tree of everything that did
+ * A human turns a conflict into work. The new task's workspace is the tree of everything that did
  * combine, and its brief carries the conflicting contribution's change. What the task publishes stands
  * in for that contribution, so the planner composes the reconciled version instead.
  */
@@ -119,6 +119,6 @@ export async function reconcileConflict(env: Env, candidateId: string, participa
   }
   await objective.resolveInbox(`conflict-${candidateId}`, `reconciling in ${id}`);
   await objective.updateCandidate(candidateId, { status: "superseded", note: `Being reconciled in ${id}` });
-  await objective.log("Durable Objects", "reconcile", `A person asked ${names.get(participantId) ?? participantId} to reconcile ${x.title} with ${kept.join(", ") || "the checkpoint"}`, { task: id, candidate: candidateId });
+  await objective.log("Durable Objects", "reconcile", `A human asked ${names.get(participantId) ?? participantId} to reconcile ${x.title} with ${kept.join(", ") || "the checkpoint"}`, { task: id, candidate: candidateId });
   return startTask(env, id, participantId, "agent");
 }

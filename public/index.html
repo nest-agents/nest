@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Nest</title>
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/styles.css?v=20261008a">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#f1f3f5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#11151b" media="(prefers-color-scheme: dark)">
@@ -13,10 +13,10 @@
 <body>
 <div class="app">
   <header class="top">
-    <a class="wordmark" href="/" aria-label="Nest home"><span class="wordmark-name">Nest</span><span class="wordmark-sub">Agents and people</span></a>
+    <a class="wordmark" href="/" aria-label="Nest home"><span class="wordmark-name">Nest</span><span class="wordmark-sub">Agents and humans</span></a>
     <div class="top-right">
       <span class="stat cp" id="headChip"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8h14" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="3.6" fill="currentColor"/></svg><span>Checkpoint <b id="headVer">-</b></span></span>
-      <span class="stat"><b id="peopleCount">0</b><span id="peopleNoun">people,</span><b id="agentCount">0</b><span>agents</span></span>
+      <span class="stat"><b id="peopleCount">0</b><span id="peopleNoun">humans,</span><b id="agentCount">0</b><span>agents</span></span>
       <span class="stat spend" id="spendChip" title="Model spend so far, against the cap"><span>Spend <b id="spend">$0.00</b> of <span id="spendCap">$50</span></span><span class="meter" aria-hidden="true"><span id="spendBar"></span></span></span>
       <span class="stat live" id="liveChip"><span class="dot"></span><span id="liveText">Connecting</span></span>
       <button class="btn small" id="signInBtn" type="button">Sign in</button>
@@ -52,7 +52,7 @@
       </div>
       <div class="legend">
         <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--text)" stroke-width="1.5"/></svg>Agent's contribution</span>
-        <span><svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="var(--text)" stroke-width="1.5"/></svg>Person's contribution</span>
+        <span><svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2.5" fill="none" stroke="var(--text)" stroke-width="1.5"/></svg>Human's contribution</span>
         <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--neutral)"/></svg>Approved</span>
         <span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--ink)"/></svg>In a checkpoint</span>
         <span><svg viewBox="0 0 14 14"><defs><pattern id="lh" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="3" class="hatch-line"/></pattern></defs><circle cx="7" cy="7" r="5.5" fill="url(#lh)" stroke="var(--text)" stroke-dasharray="2 1.5"/></svg>Relied on old context</span>
@@ -76,6 +76,6 @@
 </div>
 <div class="toast" id="toast" hidden></div>
 <div class="scrim" id="scrim" hidden></div>
-<script src="/app.js" type="module"></script>
+<script src="/app.js?v=20261008a" type="module"></script>
 </body>
 </html>

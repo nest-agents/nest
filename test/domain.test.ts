@@ -239,13 +239,13 @@ describe("review routing", () => {
     expect(d.state === "needs-human" && d.reasons).toEqual(["Reviewers disagree", "A reviewer blocked it"]);
     expect(route(DEFAULT_POLICY, subject, [triage, a("anthropic", "approve", 0.5), a("deepseek", "approve")]).state).toBe("needs-human");
   });
-  it("escalates protected files and lets a person's verdict settle it", () => {
+  it("escalates protected files and lets a human's verdict settle it", () => {
     const s = { ...subject, paths: ["wrangler.jsonc"] };
     expect(route(DEFAULT_POLICY, s, [triage, a("anthropic", "approve"), a("deepseek", "approve")]).state).toBe("needs-human");
     const person: ReviewFact = { reviewer: "scott", kind: "person", family: "person", verdict: "block", confidence: 1 };
     expect(route(DEFAULT_POLICY, s, [triage, person])).toEqual({ state: "blocked", by: "people" });
   });
-  it("reviews people's work the same way", () => {
+  it("reviews humans' work the same way", () => {
     const mine = { ...subject, author: "scott", authorKind: "person" as const, authorFamily: "person" };
     expect(route(DEFAULT_POLICY, mine, [triage, a("openai", "changes"), a("anthropic", "changes")])).toEqual({ state: "changes", by: "agents" });
   });
@@ -295,7 +295,7 @@ describe("policy floors", () => {
     expect(effectivePolicy({ agentReviewers: -3, minConfidence: Number.NaN }).agentReviewers).toBe(1);
     expect(effectivePolicy({ minConfidence: 0.1 }).minConfidence).toBe(0.5);
   });
-  it("does not send every agent change that cites a requirement to a person", () => {
+  it("does not send every agent change that cites a requirement to a human", () => {
     const code = { ...subject, paths: ["src/export.ts"], citedItems: ["req/export-columns"] };
     const good = ok.map((r) => ({ ...r, confidence: 0.9 }));
     expect(route(DEFAULT_POLICY, code, good).state).toBe("approved");

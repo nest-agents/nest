@@ -1,4 +1,4 @@
-// Review routing: agents review everything, people are asked only when it matters.
+// Review routing: agents review everything, humans are asked only when it matters.
 // The policy is data so that changing it is itself a reviewable context change.
 
 import type { ParticipantKind, Verdict } from "../protocol";
@@ -51,14 +51,14 @@ export type Subject = {
   citedItems: string[];
   /** True when the change adds a symlink (mode 120000) or a submodule (mode 160000). */
   specialEntries?: boolean;
-  /** Deterministic concerns (for example possible prompt injection) that only a person can clear. */
+  /** Deterministic concerns (for example possible prompt injection) that only a human can clear. */
   flags?: string[];
 };
 
 /**
  * Paths arrive as exact git tree paths from ingest. Nest never rewrites them: a path that is not
  * already plain (printable ASCII segments, no "." or ".." segments, no empty segments, no trailing
- * dot or space, no backslash) is unusual enough that a person should look.
+ * dot or space, no backslash) is unusual enough that a human should look.
  */
 export function unusualPath(path: string): boolean {
   if (!/^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/.test(path) || path.includes("\\")) return true;
@@ -81,7 +81,7 @@ export type Routing =
 
 /**
  * `ReviewFact.kind` and `reviewer` must come from the authenticated principal, never from a
- * review payload. Authors never count as reviewers of their own work, person or agent.
+ * review payload. Authors never count as reviewers of their own work, human or agent.
  */
 export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact[]): Routing {
   const policy = effectivePolicy(given);

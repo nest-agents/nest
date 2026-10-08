@@ -1,4 +1,4 @@
-// Acceptance and context change: the two ways a person moves the project forward.
+// Acceptance and context change: the two ways a human moves the project forward.
 
 import { acceptError, type CandidateFacts } from "./domain/accept";
 import { HARBOR_CHECKS } from "./checks/harbor";
@@ -43,7 +43,7 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
   await objective.markAccepted(candidateId, checkpoint);
   await objective.log("Durable Objects", "accept", `Compare-and-swap moved the project head from checkpoint ${head.version} to ${checkpoint.version}`, { candidate: candidateId, checkpoint: checkpoint.version });
 
-  // Every approach that lost becomes one note with the person's reason and the reviews against it, so
+  // Every approach that lost becomes one note with the human's reason and the reviews against it, so
   // later agents start informed. An approach is everything one task contributed to the group.
   const taskTitle = (id: string | null) => state.tasks.find((t) => t.id === id)?.title ?? id ?? "untasked work";
   for (const [group, chosenId] of Object.entries(c.choice)) {
@@ -59,7 +59,7 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
       await project.addNote({
         id, kind: "rejected", title: taskTitle(task), source: members[0]!.id,
         body: `In "${group}", ${taskTitle(task)} (${members.map((m) => `${short(m.id)} ${m.title}`).join("; ")}) was not chosen at checkpoint ${checkpoint.version}; ${taskTitle(winner?.task ?? null)} was. `
-          + `The person's reason: ${reason?.trim().replace(/[.\s]+$/, "") || "none given"}. `
+          + `The human's reason: ${reason?.trim().replace(/[.\s]+$/, "") || "none given"}. `
           + (reasons.length ? `Reviews against it: ${reasons.join(" ")}` : "Its reviews did not object."),
       });
       await objective.log("Artifacts", "note", `Recorded why ${taskTitle(task)} was not chosen`, { note: id });
@@ -79,7 +79,7 @@ export async function acceptCandidate(env: Env, candidateId: string, expectedVer
 const candidateBranchName = (id: string) => `cand-${id}`;
 
 /**
- * A person accepts a new version of a context item. The head gets a context-only checkpoint; work that
+ * A human accepts a new version of a context item. The head gets a context-only checkpoint; work that
  * cited the old version is found by the citation index, its outcomes are marked outdated, and the
  * frontier is recomposed under the new requirement.
  */

@@ -6,7 +6,7 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 
 | Party | Trusted for | Never trusted for |
 |---|---|---|
-| The owner (person) | Acceptance, context changes, final reviews | n/a |
+| The owner (human) | Acceptance, context changes, final reviews | n/a |
 | Nest Worker and Durable Objects | Identity, fencing, routing, the head | n/a |
 | Agent computers (containers) | Nothing. Every action is checked at the boundary | Git refs, model spend, other workspaces, verdicts |
 | Runner computers | Composition with git, until candidate code starts | Anything after candidate code runs |
@@ -49,16 +49,16 @@ Agents write code that Nest then runs, reviews and composes. The design assumes 
 - Workspace names, workflow IDs, computers and tokens carry a generation, so nothing from before a reset maps onto new work.
 - An attempt from an older generation stands itself down and destroys its computer. A failed read of the generation never counts as stale.
 
-**Contributors can only retire their own work.** `Nest-Supersedes` names a contribution the same author wrote and that is not yet accepted. To replace someone else's work, an agent publishes an alternative, and a person chooses.
+**Contributors can only retire their own work.** `Nest-Supersedes` names a contribution the same author wrote and that is not yet accepted. To replace someone else's work, an agent publishes an alternative, and a human chooses.
 
 **Routing fails closed.**
 - Policy floors (protected paths, reviewer count, confidence) cannot be lowered by policy.
-- These go to a person: unusual paths (non-canonical, non-ASCII, trailing dots or spaces, `..`), symlinks, submodules, unreadable files and oversized changes.
+- These go to a human: unusual paths (non-canonical, non-ASCII, trailing dots or spaces, `..`), symlinks, submodules, unreadable files and oversized changes.
 
 **Prompt injection is data, then a tripwire.**
 - Participant-written text reaches models only inside random-boundary data blocks, with a rule that nothing inside is an instruction.
 - A deterministic detector scans every added line, the message and the paths. It first applies NFKC, removes format characters, folds Cyrillic and Greek look-alikes, strips comment leaders and joins lines. It also flags words that mix scripts.
-- A hit sends the change to a person whatever agent reviewers say.
+- A hit sends the change to a human whatever agent reviewers say.
 
 **Acceptance is a compare-and-swap.** The Project Durable Object advances the head only if the version, context digest and policy digest match, every required check passed exactly once, every member is approved, and stale citations carry the owner's context review.
 

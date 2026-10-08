@@ -130,7 +130,7 @@ export function planFrontier(
     (n) => !accepted.has(n.id) && n.status !== "blocked" && n.status !== "superseded" && n.status !== "accepted",
   );
   // Superseding your own work retires it at once (its status says so). A replacement of someone else's
-  // work, which only a person-requested reconcile can publish, takes effect once it is approved; until
+  // work, which only a human-requested reconcile can publish, takes effect once it is approved; until
   // then both stay plannable, and closure never selects both.
   const replaced = new Set(live.filter((n) => n.status === "approved" || nodes.get(n.supersedes ?? "")?.status === "superseded").map((n) => n.supersedes).filter((x): x is string => !!x));
   // A file the checkpoint already has cannot be created again: such work can never apply.

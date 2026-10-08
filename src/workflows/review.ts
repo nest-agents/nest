@@ -82,7 +82,7 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
         // Every participant-written string that reaches the prompt is scanned, including sibling titles.
         nonce, injection: injectionFindings(fullDiff, [c.message, ...c.paths, ...siblings.map((x) => x.title)]), truncated: promptDiff.truncated, unreadable: promptDiff.unreadable,
         title: c.title, message: c.message, diff, contextText, deps, alternative: c.alternative, repoText,
-        author: author ? `${author.name} (${author.kind === "agent" ? author.model : "person"})` : c.author,
+        author: author ? `${author.name} (${author.kind === "agent" ? author.model : "human"})` : c.author,
         participants: state.participants,
       };
     });
@@ -93,7 +93,7 @@ ${input.deps ? `\nIt depends on:\n${wrapUntrusted(input.nonce, "dependencies", i
 ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
     const rule = UNTRUSTED_RULE.replaceAll("<id>", input.nonce);
 
-    // Deterministic guard: text aimed at models in the change goes to a person whatever reviewers say.
+    // Deterministic guard: text aimed at models in the change goes to a human whatever reviewers say.
     if (input.injection.length) {
       await step.do("flag possible prompt injection", async () => {
         await objective.flagContribution(id, `Possible prompt injection in the change: ${input.injection.join("; ")}`);
@@ -183,7 +183,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       ));
     }
 
-    // Reviewers that could not give a verdict never leave a contribution stuck: a person is asked.
+    // Reviewers that could not give a verdict never leave a contribution stuck: a human is asked.
     await step.do("escalate if undecided", async () => {
       const r = await objective.routing(id);
       if (r.state === "needs-reviewers") await objective.openInbox({ id: `review-${id}`, kind: "review", target: id, reasons: ["Agent reviewers could not reach a verdict"] });

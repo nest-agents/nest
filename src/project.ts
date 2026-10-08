@@ -125,7 +125,7 @@ export class ProjectDO extends DurableObject<Env> {
   }
 
   /**
-   * A person accepts a new version of a context item. This creates a context-only checkpoint on the
+   * A human accepts a new version of a context item. This creates a context-only checkpoint on the
    * same code commit. Existing work keeps its original citations; staleness is computed, not rewritten.
    */
   async acceptContext(expectedVersion: number, item: ContextItem): Promise<{ checkpoint: Checkpoint; previous: ContextItem | null }> {

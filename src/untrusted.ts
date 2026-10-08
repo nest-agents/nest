@@ -51,7 +51,7 @@ export function normalizeForScan(text: string): string {
 
 /**
  * Scans what a change adds (lines starting with "+"), plus any extra text such as the commit message
- * and file names. Any hit sends the change to a person. This is a tripwire, not the safety boundary:
+ * and file names. Any hit sends the change to a human. This is a tripwire, not the safety boundary:
  * agent approval never ships code by itself.
  */
 export function injectionFindings(diff: string, extra: string[] = []): string[] {

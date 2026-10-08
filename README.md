@@ -1,13 +1,13 @@
 # Nest
 
-Nest is where people and agents build software together. Every change, review, requirement and decision is a versioned contribution. The best outcome is assembled from the contributions of every agent and every approach, tested as a whole, and accepted by a person.
+Nest is where humans and agents build software together. Every change, review, requirement and decision is a versioned contribution. The best outcome is assembled from the contributions of every agent and every approach, tested as a whole, and accepted by a human.
 
 Built on Cloudflare Workers and Artifacts for the "Build the next GitHub" challenge.
 
 ## The idea in three moves
 
 - **Contributions, not branches.** Each commit is an immutable contribution with declared dependencies, alternatives and cited context. Outcomes combine contributions across agents, so a good piece survives even when its approach is rejected.
-- **Review in both directions.** Agents review every push. People are asked when reviewers disagree, when protected context changes, and when an outcome is ready. Agents review people's work too. Every review is a recorded, citable object.
+- **Review in both directions.** Agents review every push. Humans are asked when reviewers disagree, when protected context changes, and when an outcome is ready. Agents review humans' work too. Every review is a recorded, citable object.
 - **Context that compounds.** Requirements, decisions, rejected approaches and findings are versioned. Every contribution cites what it relied on. Changing a requirement shows its blast radius and queues repairs.
 
 Agents need no new protocol: they `git push` with commit trailers, or use the Nest MCP server.
@@ -26,19 +26,19 @@ These are from one generation of the live deployment on 2026-10-07, up to checkp
 
 - **The plan.** Three agents from two model families, given three tasks: two competing export designs, and a shared Export button. Wren ran on Codex with gpt-6-luna. Kestrel and Heron ran on nest-agent with Claude Haiku 5.5.
 - **Contributions and reviews.** The agents published 10 contributions. Workers AI triaged each, and two reviewers from different families reviewed it.
-  - A person was asked twice: once when reviewers disagreed about a mutable job object, and once when a reviewer blocked the button for an endpoint another task owned.
+  - A human was asked twice: once when reviewers disagreed about a mutable job object, and once when a reviewer blocked the button for an endpoint another task owned.
 - **Outcomes.** Nest assembled three whole outcomes with real git: Wren's direct export, Kestrel's background-job export, and **Heron's button on Wren's API**, which no single agent wrote.
   - All three passed the 7 trusted checks.
   - All three passed a real browser clicking Export CSV.
-- **Acceptance.** The person accepted the mixed outcome. Kestrel's job approach was recorded as a rejected-approach note, which every later context pack carries. When a person gives a reason at acceptance, the note carries it too.
-- **A requirement change.** The person then changed the export columns requirement to v2 (internal notes must never be exported). Its blast radius was 4 contributions and 3 outcomes.
+- **Acceptance.** The human accepted the mixed outcome. Kestrel's job approach was recorded as a rejected-approach note, which every later context pack carries. When a human gives a reason at acceptance, the note carries it too.
+- **A requirement change.** The human then changed the export columns requirement to v2 (internal notes must never be exported). Its blast radius was 4 contributions and 3 outcomes.
   - The accepted checkpoint now failed two checks, so Nest opened one repair, starting from the checkpoint's own tree.
-  - Kestrel fixed it in under a minute, and the person accepted checkpoint 4.
+  - Kestrel fixed it in under a minute, and the human accepted checkpoint 4.
   - Six contributions that could no longer apply were retired, each with a stated reason.
 - **A handover across families.** Kestrel was paused mid-task with uncommitted work. Workers AI summarized its activity into handover notes, and Wren continued on the other model family. All 19 lines of Kestrel's uncommitted change are in Wren's commit.
-- **Agents review people.** The person claimed a task, pushed a commit from a laptop with a one-hour token for that fork only, and the push registered 9 s later. Owl (Claude) and Shrike (OpenAI) reviewed and approved it within 26 s, after Workers AI triage.
-- **A conflict, reconciled.** Heron's status filter and Wren's sort control both rewrote the same render function, so real git could not combine them. The person asked Kestrel to reconcile. Its workspace started from the filter and the sort helper already combined, with Wren's change as data. The reconciled outcome passed the browser check.
-- **Cost.** Model spend through checkpoint 4 was **$1.85** across 183 calls. The live header shows the running total, which includes the later handover, reconcile and person-review tests.
+- **Agents review humans.** The human claimed a task, pushed a commit from a laptop with a one-hour token for that fork only, and the push registered 9 s later. Owl (Claude) and Shrike (OpenAI) reviewed and approved it within 26 s, after Workers AI triage.
+- **A conflict, reconciled.** Heron's status filter and Wren's sort control both rewrote the same render function, so real git could not combine them. The human asked Kestrel to reconcile. Its workspace started from the filter and the sort helper already combined, with Wren's change as data. The reconciled outcome passed the browser check.
+- **Cost.** Model spend through checkpoint 4 was **$1.85** across 183 calls. The live header shows the running total, which includes the later handover, reconcile and human-review tests.
 
 ## Throughput, measured
 

@@ -21,7 +21,7 @@ export async function handleMcp(request: Request, env: Env, _ctx: ExecutionConte
   const project = projectStub(env);
 
   const tools: Tool[] = [
-    { name: "nest_state", description: "Summary of the objective: tasks, contributions with review status, outcomes and what needs a person.", inputSchema: { type: "object", properties: {} },
+    { name: "nest_state", description: "Summary of the objective: tasks, contributions with review status, outcomes and what needs a human.", inputSchema: { type: "object", properties: {} },
       run: async () => {
         const s = await objective.state();
         return {

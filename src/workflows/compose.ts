@@ -148,10 +148,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
         }
         const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
-        // git's own advice ("hint: ...") is for a terminal, not for the person deciding.
+        // git's own advice ("hint: ...") is for a terminal, not for the human deciding.
         const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
         await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
-        // A real overlap is a choice for a person, not a bug for an agent to rewrite.
+        // A real overlap is a choice for a human, not a bug for an agent to rewrite.
         await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
         return { conflict: result.at };
       }
@@ -196,7 +196,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 }
 
 /**
- * Names an outcome the way a person would: the approach it takes and who built it, for example
+ * Names an outcome the way a human would: the approach it takes and who built it, for example
  * "Direct CSV export, by Heron and Wren". Without a chosen approach it falls back to the work itself.
  */
 function outcomeName(members: { task: string | null; author: string; title: string }[], approaches: { task: string | null }[], state: { tasks: { id: string; title: string }[]; participants: { id: string; name: string }[] }): string {

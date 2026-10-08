@@ -1,4 +1,4 @@
-// The export, as a person does it: a real browser (Browser Rendering) opens the candidate's live preview,
+// The export, as a human does it: a real browser (Browser Rendering) opens the candidate's live preview,
 // picks a viewer, clicks Export CSV and waits for the file. The file is judged by the same trusted rules
 // as the HTTP checks, so the button only passes if clicking it gives that viewer exactly their export.
 

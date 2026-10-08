@@ -4,18 +4,18 @@ This describes what runs today at https://nestagents.dev, built for Cloudflare's
 
 ## 1. The idea
 
-Git and GitHub assume a few careful people: branch, pull request, review, merge. With many agents and a few people, that breaks in three places, and Nest changes each one.
+Git and GitHub assume a few careful humans: branch, pull request, review, merge. With many agents and a few humans, that breaks in three places, and Nest changes each one.
 
 | Where it breaks | What Nest does |
 |---|---|
 | **The branch is the unit of decision.** Rejecting a pull request throws away the good pieces inside it. | The unit is the **contribution**: one commit with declared dependencies, an optional alternative group and cited context. **Outcomes are assembled** from contributions across agents and approaches, merged with real git and checked as a whole. A good piece survives when its approach loses. |
-| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Two agent reviewers from different model families read every push. A person is asked only when it matters: reviewers disagree, a review blocks, a deterministic guard fires, or an outcome is ready. Agents review people's work too. |
+| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Two agent reviewers from different model families read every push. A human is asked only when it matters: reviewers disagree, a review blocks, a deterministic guard fires, or an outcome is ready. Agents review humans' work too. |
 | **Context evaporates.** Each agent starts cold, and why an approach lost is buried in a chat log. | **Context is versioned like code.** Requirements, decisions and rejected approaches live in a context repository. Contributions cite the versions they relied on. Changing a requirement shows its **blast radius** and opens a repair. |
 
 ## 2. What runs where
 
 ```text
-                 people (browser)          external agents (git + MCP)
+                 humans (browser)          external agents (git + MCP)
                         │                              │
                         ▼                              ▼
    ┌──────────────────────── Nest Worker ───────────────────────────┐
@@ -54,7 +54,7 @@ Git and GitHub assume a few careful people: branch, pull request, review, merge.
 
 ## 3. A contribution's life
 
-1. **Claim.** Starting a task forks the accepted checkpoint into a fresh Artifacts repository: `harbor-export.<generation>--<task>--e<epoch>`. A repair forks from the exact tree it repairs. A handover forks from the paused attempt's workspace. Agents run in a container whose only network path is `Outbound`. People and external agents get a one-hour write token for that fork only.
+1. **Claim.** Starting a task forks the accepted checkpoint into a fresh Artifacts repository: `harbor-export.<generation>--<task>--e<epoch>`. A repair forks from the exact tree it repairs. A handover forks from the paused attempt's workspace. Agents run in a container whose only network path is `Outbound`. Humans and external agents get a one-hour write token for that fork only.
 2. **Pack.** The agent receives a context pack: the objective and its criteria, its task, every requirement and decision with citations, rejected approaches and why, others' published work with diffs, review findings so far, and a snapshot of the repository. Everything written by participants is wrapped as untrusted data.
 3. **Push.** Agents commit with trailers and `git push`. No new protocol is involved:
 
@@ -75,20 +75,20 @@ Git and GitHub assume a few careful people: branch, pull request, review, merge.
    - starts its review.
 
    Missing reviews are reconciled on every later push, so none is lost.
-5. **Review.** Workers AI triages. Two reviewers from different families then read the contribution, its task, the requirements and the repository around the change. Routing decides whether a person is needed.
+5. **Review.** Workers AI triages. Two reviewers from different families then read the contribution, its task, the requirements and the repository around the change. Routing decides whether a human is needed.
 6. **Compose.** The planner computes the frontier of outcomes worth building (section 4). For each one, a runner container clones the checkpoint and cherry-picks the contributions in dependency order. Cherry-pick is a three-way merge, so independent edits to one file combine. Then the runner:
    - serves the result with a trusted server;
    - runs the trusted checks from outside the container;
    - has a real browser click Export CSV on the live preview.
 
-   A conflict becomes an inbox choice for a person.
-7. **Accept.** The person accepts a ready outcome. The Project DO advances the head only if all of these hold:
+   A conflict becomes an inbox choice for a human.
+7. **Accept.** The human accepts a ready outcome. The Project DO advances the head only if all of these hold:
    - version, context digest and policy digest match;
    - every required check passed;
    - every member is approved;
-   - stale citations carry the person's context review.
+   - stale citations carry the human's context review.
 
-   Losing approaches become notes carrying the person's reason. A mirror computer, which never runs candidate code, moves the project's `main`.
+   Losing approaches become notes carrying the human's reason. A mirror computer, which never runs candidate code, moves the project's `main`.
 
 ## 4. The planner
 
@@ -99,7 +99,7 @@ Inputs: live contributions, their dependencies, alternative groups, and which fi
 - **Implicit alternatives.** Independent contributions that create the same file cannot compose, so they become a choice automatically. In the second live run, three agents each created `test/ui.test.ts`, and two each wrote a CSV encoder.
 - **Ranking.** Whole outcomes go before fragments of other outcomes, then ready before waiting, then the most approved. The top three are composed.
 - **Judging.** Each checkpoint is measured once per context version. An outcome that fails only what the checkpoint also fails is **Incomplete**. One that fails a check the checkpoint passes **Breaks a check**.
-- **Conflicts.** A conflict becomes a choice for a person: keep one contribution, or **reconcile with an agent**.
+- **Conflicts.** A conflict becomes a choice for a human: keep one contribution, or **reconcile with an agent**.
   - Composition keeps the tree of everything that did combine, and the reconcile task starts there with the conflicting change as data.
   - What the task publishes replaces the conflicting contribution once reviewers approve it. Until then, the original and the replacement are a choice.
 - **Repair.** At most one automatic repair runs at a time. It starts for a true regression only:
@@ -110,7 +110,7 @@ Inputs: live contributions, their dependencies, alternative groups, and which fi
 
 ## 5. Review routing
 
-The routing policy is a versioned context item (`policy/review-routing`). Floors in code cannot be lowered by policy. A person is asked when:
+The routing policy is a versioned context item (`policy/review-routing`). Floors in code cannot be lowered by policy. A human is asked when:
 
 - reviewers disagree, or any review blocks;
 - confidence is below the threshold;
@@ -125,7 +125,7 @@ Authors never count as reviewers of their own work. Review identity and model fa
 - **Versioned items.** Requirements, decisions, evidence and policy are Markdown files with front matter, in the `harbor-context` Artifacts repository. A new version is a commit by the context computer and a context-only checkpoint in the Project DO.
 - **Citations.** Contributions cite `item@vN`. The Objective DO keeps the citation index.
 - **Blast radius.** Accepting a new version finds every contribution, outcome and running task that cited the old one. Outcomes become outdated, the frontier is recomposed, and a regression of the head opens a repair.
-- **Rejected approaches.** When a person accepts an outcome that turns down an approach, Nest writes a note with the person's reason and the reviews against it. Every later context pack carries it.
+- **Rejected approaches.** When a human accepts an outcome that turns down an approach, Nest writes a note with the human's reason and the reviews against it. Every later context pack carries it.
 - **Search.** `nest_search` merges a keyword pass over the exact current items with AI Search when that binding is configured.
 
 ## 7. Safety
@@ -139,7 +139,7 @@ Full detail is in [SECURITY.md](SECURITY.md). In short:
 - **Checks never trust the candidate.** They run outside the candidate, and a candidate cannot print its way to a pass.
 - **Previews are isolated.** Each is served with `Content-Security-Policy: sandbox`.
 - **Fencing is enforced twice**, and every name carries a generation. Reset can't be used to escape the spend cap: the ledger survives it.
-- **Text from participants is data.** It reaches models only inside random-boundary blocks. A deterministic tripwire (NFKC, confusables, comment leaders, mixed scripts) sends a change to a person whatever reviewers say.
+- **Text from participants is data.** It reaches models only inside random-boundary blocks. A deterministic tripwire (NFKC, confusables, comment leaders, mixed scripts) sends a change to a human whatever reviewers say.
 
 ## 8. Scale
 
@@ -177,8 +177,8 @@ Each item was found in a real run on Cloudflare and is fixed in the commit histo
 - **The planner's diamond bug.** A shared visited set made every chain of three or more commits look cyclic, so only fragments were ever composed. A memoized depth-first search tracks the current path instead.
 - **One approach, several commits.** Agents tagged two commits of one approach with the same alternative group, which made them exclude each other. An option is now everything one task contributed.
 - **Containers outliving a reset.** Computers were named by task and epoch, so a new attempt found the previous generation's agent still running. Computers are now named by workspace.
-- **Repair cascades.** In the first run, every conflict auto-started a repair that began from scratch. Overlaps are now choices for a person, repairs need a true regression and the failing tree, and only one runs at a time.
+- **Repair cascades.** In the first run, every conflict auto-started a repair that began from scratch. Overlaps are now choices for a human, repairs need a true regression and the failing tree, and only one runs at a time.
 - **Reviewer scope.** A reviewer blocked the button task for not implementing the endpoint another task owned. Reviewers now see the contribution's task and which tasks own the rest.
 - **Handovers that dropped their payload.** Starting the next attempt cleared the paused note before the new attempt read it, so Heron rewrote Wren's staged work from scratch. The note now travels in the workflow's parameters. Pauses also carry a Workers AI summary of the outgoing agent's activity. In the re-test, all 19 lines of Kestrel's uncommitted change reached Wren's commit.
-- **Leftovers after acceptance.** Pieces that create a file the checkpoint already has, and approaches the person turned down, kept being composed as conflicts. Acceptance now retires them with a reason.
+- **Leftovers after acceptance.** Pieces that create a file the checkpoint already has, and approaches the human turned down, kept being composed as conflicts. Acceptance now retires them with a reason.
 - **Reading files through the browser.** A CSV read over the DevTools protocol is buffered whole before any size cap applies. The browser check now records only which request the click made, and replays it through the container with a streaming cap.

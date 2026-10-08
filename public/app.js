@@ -114,12 +114,13 @@ function modal(html, onMount) {
 
 function render() {
   if (!S) return;
-  $("#objectiveTitle").textContent = S.objective.title ?? "Objective";
+  // Asterion's one flourish: the headline ends on a blue full stop.
+  $("#objectiveTitle").innerHTML = `${esc(String(S.objective.title ?? "Objective").replace(/[.\s]+$/, ""))}<span class="blue-period">.</span>`;
   $("#projectName").textContent = S.objective.project ? S.objective.project[0].toUpperCase() + S.objective.project.slice(1) : "Project";
   $("#headVer").textContent = S.head ? String(S.head.version) : "-";
   const people = S.participants.filter((p) => p.kind === "person").length;
   $("#peopleCount").textContent = people;
-  $("#peopleNoun").textContent = people === 1 ? "person," : "people,";
+  $("#peopleNoun").textContent = people === 1 ? "human," : "humans,";
   $("#agentCount").textContent = S.participants.filter((p) => p.kind === "agent").length;
   const used = S.spend.usedMicroUsd / 1e6, cap = (S.spend.capMicroUsd ?? 50e6) / 1e6;
   $("#spend").textContent = `$${used.toFixed(2)}`;
@@ -133,7 +134,7 @@ function render() {
   renderRight();
 }
 
-/** Motion that answers a person's action: cross-fade through the View Transitions API where supported. */
+/** Motion that answers a human's action: cross-fade through the View Transitions API where supported. */
 function transition(fn) {
   if (reduceMotion || !document.startViewTransition) return fn();
   document.startViewTransition(fn);
@@ -249,11 +250,11 @@ function renderMap() {
     svg.innerHTML = "";
     svg.setAttribute("height", G.trunkH + Math.max(1, L.length) * G.laneH);
     empty.hidden = false;
-    empty.innerHTML = `<div><h3>No contributions yet</h3><p>${S.tasks.length ? "Agents publish here as they push. Each commit lands in its task's lane." : "Create a task and start an agent or a person on it. Every commit they push lands here."}</p></div>`;
+    empty.innerHTML = `<div><h3>No contributions yet</h3><p>${S.tasks.length ? "Agents publish here as they push. Each commit lands in its task's lane." : "Create a task and start an agent or a human on it. Every commit they push lands here."}</p></div>`;
     return;
   }
   empty.hidden = true;
-  // Stay with the latest work unless the person has scrolled back in time.
+  // Stay with the latest work unless the human has scrolled back in time.
   const plot = $("#plot");
   const atEnd = seen.nodes === null || plot.scrollLeft + plot.clientWidth >= plot.scrollWidth - 12;
   const { cps, pos, bead, ghost, trunkY, spineY } = geometry();
@@ -265,7 +266,7 @@ function renderMap() {
 
   // Rows.
   out.push(`<rect class="row trunk-row" x="0" y="0" width="${G.w}" height="${G.trunkH}"/>`);
-  L.forEach((_, i) => out.push(`<rect class="row ${i % 2 ? "alt" : ""}" x="0" y="${G.trunkH + i * G.laneH}" width="${G.w}" height="${G.laneH}"/>`));
+  L.forEach((_, i) => out.push(`<line class="row-rule" x1="0" y1="${G.trunkH + i * G.laneH + 0.5}" x2="${G.w}" y2="${G.trunkH + i * G.laneH + 0.5}"/>`));
   out.push(`<line class="spine" x1="${G.spineX}" y1="${G.trunkH + 8}" x2="${G.spineX}" y2="${G.h - 12}"/>`);
 
   // The trunk: solid through accepted checkpoints, dashed out to the one you can accept.
@@ -429,7 +430,7 @@ function inboxHtml() {
     }
     const c = S.contributions.find((x) => x.id === i.target);
     if (!c) return "";
-    return `<div class="card ${n === 0 ? "focus" : ""}"><h4>${esc(c.title)}</h4><p>${esc(nameOf(c.author))} published <span class="id">${esc(short(c.id))}</span>. A person is needed:</p>
+    return `<div class="card ${n === 0 ? "focus" : ""}"><h4>${esc(c.title)}</h4><p>${esc(nameOf(c.author))} published <span class="id">${esc(short(c.id))}</span>. A human is needed:</p>
       <ul class="reasons">${i.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${reviewsOf(c.id).map(reviewHtml).join("")}
       ${owner() ? `<div class="field"><label for="rv-${esc(c.id)}">Your review</label><input id="rv-${esc(c.id)}" placeholder="One sentence: why"></div>
       <div class="row"><button class="btn small primary" data-review="${esc(c.id)}" data-verdict="approve" type="button">Approve</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="changes" type="button">Request changes</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="block" type="button">Block</button></div>` : ""}
@@ -474,7 +475,7 @@ function outcomeCard(c) {
 }
 
 function inspectHtml() {
-  if (!selected) return `<div class="empty"><h4>Select anything on the map</h4><p>A contribution shows its message, the context it cites, its changed files and every review from people and agents. A context item shows what relies on it.</p></div>`;
+  if (!selected) return `<div class="empty"><h4>Select anything on the map</h4><p>A contribution shows its message, the context it cites, its changed files and every review from humans and agents. A context item shows what relies on it.</p></div>`;
   if (selected.type === "contrib") {
     const c = S.contributions.find((x) => x.id === selected.id);
     if (!c) return "";
@@ -549,7 +550,7 @@ function startTask(id) {
   const workers = S.participants.filter((p) => ["codex", "nest-agent", "opencode", "external"].includes(p.harness) || p.kind === "person");
   const t = S.tasks.find((x) => x.id === id);
   modal(`<form class="form" id="st"><h3>${t.status === "paused" ? "Hand over" : "Start"} ${esc(t.title)}</h3><p>${t.status === "paused" ? "The next participant continues from the paused tree, the saved uncommitted work and the notes." : "Nest forks the accepted checkpoint into a workspace for this attempt."}</p>
-    <div class="field"><label for="st-p">Participant</label><select id="st-p">${workers.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.kind === "person" ? "person, push from your machine" : `${p.harness}, ${p.model}`)})</option>`).join("")}</select></div>
+    <div class="field"><label for="st-p">Participant</label><select id="st-p">${workers.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.kind === "person" ? "human, push from your machine" : `${p.harness}, ${p.model}`)})</option>`).join("")}</select></div>
     <div class="row"><button class="btn small primary" type="submit">Start</button></div></form>`, (root, close) => {
     root.querySelector("#st").onsubmit = (e) => {
       e.preventDefault();
@@ -607,7 +608,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.accept) {
     const c = S.candidates.find((x) => x.id === t.dataset.accept);
     const stale = c.order.map((id) => S.contributions.find((x) => x.id === id)).filter((x) => x && isStale(x));
-    // Approaches this acceptance turns down: the person's reason is recorded with them for later agents.
+    // Approaches this acceptance turns down: the human's reason is recorded with them for later agents.
     const chosenTasks = new Set(Object.entries(c.choice ?? {}).filter(([g]) => !/^(overlap|replace):/.test(g)).map(([, id]) => S.contributions.find((x) => x.id === id)?.task));
     const groups = new Set(Object.keys(c.choice ?? {}).filter((g) => !/^(overlap|replace):/.test(g)));
     const losing = [...new Set(S.contributions.filter((x) => x.alternative && groups.has(x.alternative) && !chosenTasks.has(x.task)).map((x) => x.task))]
