@@ -4,7 +4,7 @@
 import { ArtifactsClient } from "./artifacts";
 import { parseContextFile } from "./context";
 import { effectivePolicy, DEFAULT_POLICY, type ReviewPolicy } from "./domain/review";
-import { contextRepo, objectiveStub, projectRepo, projectStub, registryStub } from "./names";
+import { artifactsRemote, contextRepo, objectiveStub, projectRepo, projectStub, registryStub } from "./names";
 import type { ContextItem } from "./project";
 import { CONFIG_PATH, parseProjectConfig, type ProjectConfig } from "./projectconfig";
 import { OBJECTIVE_ID, PROJECT_ID, RegistryError, type Participant } from "./registry";
@@ -93,6 +93,20 @@ async function waitForHead(env: Env, repo: string, seconds: number): Promise<str
   }
 }
 
+/**
+ * Nest works on `main`. An imported repository may keep its history on another branch (`master`, say):
+ * the project's mirror computer, which never runs project code, creates `main` from the default branch.
+ */
+async function ensureMain(env: Env, project: string): Promise<boolean> {
+  const name = `mirror.${project}`;
+  const mirror = env.COMPUTERS.getByName(name);
+  await mirror.configure({ computer: name, role: "mirror", project, objective: "-" });
+  const remote = artifactsRemote(env, projectRepo(project));
+  const r = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  if (r.exitCode !== 0) console.warn(`could not create main for ${project}: ${r.stderr.slice(0, 300)}`);
+  return r.exitCode === 0;
+}
+
 /** Context items already in a project's context repository, so a project keeps its history. */
 async function readContext(env: Env, project: string): Promise<ContextItem[]> {
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
@@ -159,7 +173,12 @@ export async function bootstrapProject(env: Env, id: string, waitSeconds = 5) {
   const project = projectStub(env, id);
   const existing = await project.head();
   if (existing) return { head: existing, config: await readProjectConfig(env, id, existing.commit) };
-  const commit = await waitForHead(env, projectRepo(id), waitSeconds);
+  let commit = await waitForHead(env, projectRepo(id), waitSeconds);
+  if (!commit) {
+    const artifacts = new ArtifactsClient(env.ARTIFACTS);
+    const any = await artifacts.head(projectRepo(id), "HEAD").catch(() => null);
+    if (any && (await ensureMain(env, id))) commit = await artifacts.head(projectRepo(id)).catch(() => null);
+  }
   if (!commit) throw new RegistryError("NO_CODE_YET", `no commit on the main branch of ${projectRepo(id)} yet: push one, or wait for the import to finish`);
   // Validate before the first checkpoint exists: a malformed configuration is the owner's to fix now.
   const config = await readProjectConfig(env, id, commit);
