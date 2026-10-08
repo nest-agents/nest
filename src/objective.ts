@@ -691,10 +691,10 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("UPDATE spend SET actual = ?, state = 'settled' WHERE id = ? AND state = 'reserved'", Math.max(0, Math.round(actualMicroUsd)), id);
   }
 
-  spend(): { usedMicroUsd: number; calls: number; byModel: Record<string, number> } {
+  spend(): { usedMicroUsd: number; capMicroUsd: number; calls: number; byModel: Record<string, number> } {
     const rows = this.sql.exec<Row>("SELECT model, SUM(COALESCE(actual, reserved)) s, COUNT(*) n FROM spend WHERE state != 'refused' GROUP BY model").toArray();
     const byModel = Object.fromEntries(rows.map((r) => [String(r.model), Number(r.s)]));
-    return { usedMicroUsd: rows.reduce((a, r) => a + Number(r.s), 0), calls: rows.reduce((a, r) => a + Number(r.n), 0), byModel };
+    return { usedMicroUsd: rows.reduce((a, r) => a + Number(r.s), 0), capMicroUsd: Number(this.env.SPEND_CAP_MICRO_USD), calls: rows.reduce((a, r) => a + Number(r.n), 0), byModel };
   }
 
   /** Owner-only, for rehearsals: forget all coordination state. Repositories in Artifacts are untouched. */

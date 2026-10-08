@@ -116,19 +116,27 @@ function render() {
   if (!S) return;
   $("#objectiveTitle").textContent = S.objective.title ?? "Objective";
   $("#projectName").textContent = S.objective.project ? S.objective.project[0].toUpperCase() + S.objective.project.slice(1) : "Project";
-  $("#headVer").textContent = S.head ? `checkpoint ${S.head.version}` : "not seeded";
+  $("#headVer").textContent = S.head ? String(S.head.version) : "-";
   const people = S.participants.filter((p) => p.kind === "person").length;
   $("#peopleCount").textContent = people;
   $("#peopleNoun").textContent = people === 1 ? "person," : "people,";
   $("#agentCount").textContent = S.participants.filter((p) => p.kind === "agent").length;
-  $("#spend").textContent = `$${(S.spend.usedMicroUsd / 1e6).toFixed(2)}`;
+  const used = S.spend.usedMicroUsd / 1e6, cap = (S.spend.capMicroUsd ?? 50e6) / 1e6;
+  $("#spend").textContent = `$${used.toFixed(2)}`;
+  $("#spendCap").textContent = `$${cap.toFixed(0)}`;
+  $("#spendBar").style.inlineSize = `${Math.min(100, (100 * used) / cap).toFixed(1)}%`;
   $("#signInBtn").textContent = owner() ? "Signed in" : "Sign in";
   $("#signInBtn").disabled = owner();
   renderTools();
   renderRail();
-  renderTasks();
   renderMap();
   renderRight();
+}
+
+/** Motion that answers a person's action: cross-fade through the View Transitions API where supported. */
+function transition(fn) {
+  if (reduceMotion || !document.startViewTransition) return fn();
+  document.startViewTransition(fn);
 }
 
 function renderTools() {
@@ -160,114 +168,180 @@ function renderRail() {
   $("#store").innerHTML = `<span>Context items</span><b>${S.context.length}</b><span>Citations tracked</span><b>${citations}</b><span>Contributions</span><b>${S.contributions.length}</b><span>Reviews</span><b>${S.reviews.filter((r) => !r.triage).length}</b>`;
 }
 
-function renderTasks() {
-  $("#tasks").innerHTML = S.tasks.map((t) => {
-    const p = t.participant ? who(t.participant) : null;
-    const st = { open: "Open", running: "Running", paused: "Paused at boundary", done: "Done", failed: "Failed" }[t.status] ?? t.status;
-    const cls = t.status === "running" ? "running" : t.status === "paused" ? "paused" : t.status === "done" ? "done" : "";
-    const acts = owner()
-      ? (t.status === "running" ? `<button data-pause="${esc(t.id)}" type="button">Pause</button>`
-        : t.status !== "done" ? `<button data-start="${esc(t.id)}" type="button">${t.status === "paused" ? "Hand over" : "Start"}</button>` : "")
-      : "";
-    return `<span class="task ${cls}"><span class="dot"></span><b>${esc(t.title)}</b><span>${p ? `${esc(p.name)}, ${esc(p.model)}` : "unassigned"}${t.epoch > 1 ? `, attempt ${t.epoch}` : ""}</span><span class="state">${st}</span>${acts ? `<span class="actions">${acts}</span>` : ""}</span>`;
-  }).join("") || `<span class="task">No tasks yet${owner() ? ". Create one with New task." : "."}</span>`;
-}
-
 // ---------- map ----------
+// Lanes of contributions under one trunk of checkpoints, on a single timeline of arrival. Accepted work
+// draws a merge into the checkpoint it joined; the best ready outcome shows as the checkpoint you can accept.
 
-const G = { w: 900, top: 34, laneH: 62, labelW: 168, right: 40 };
+const G = { trunkH: 76, laneH: 66, left: 40, right: 56, slot: 40, spineX: 14 };
+const seen = { nodes: null, beads: null };
 
 function lanes() {
   const ts = [...S.tasks];
-  // Keep tasks in the same alternative group next to each other.
+  // Competing approaches sit next to each other.
   ts.sort((a, b) => (a.alternative ?? "~").localeCompare(b.alternative ?? "~") || a.createdAt.localeCompare(b.createdAt));
-  const order = [...ts.filter((t) => t.alternative), ...ts.filter((t) => !t.alternative)];
-  return order.map((t) => ({ id: t.id, name: t.title, alt: t.alternative }));
+  return [...ts.filter((t) => t.alternative), ...ts.filter((t) => !t.alternative)];
+}
+
+/** The outcome the trunk previews: the one selected, or else the first that is ready. */
+function proposal() {
+  const live = S.candidates.filter((c) => !["superseded", "accepted"].includes(c.status));
+  return live.find((c) => c.id === selCand) ?? live.find((c) => c.status === "ready") ?? null;
 }
 
 function geometry() {
   const L = lanes();
-  const slots = Math.max(8, S.contributions.length + 1);
-  G.w = Math.max(640, $("#mapWrap").clientWidth);
-  G.h = G.top + Math.max(1, L.length) * G.laneH + 22;
-  G.spineX = G.labelW + 10;
-  G.left = G.labelW + 52;
-  const laneY = (task) => G.top + Math.max(0, L.findIndex((l) => l.id === task)) * G.laneH + G.laneH / 2;
-  const order = [...S.contributions].sort((a, b) => a.seq - b.seq).map((c) => c.id);
-  const slotX = (id) => G.left + order.indexOf(id) * ((G.w - G.left - G.right) / (slots - 1));
-  const all = [...S.context];
-  const spineY = (item) => G.top + 15 + ((Math.max(1, L.length) * G.laneH - 30) * Math.max(0, all.findIndex((c) => c.id === item))) / Math.max(1, all.length - 1);
-  return { L, pos: (id) => { const c = S.contributions.find((x) => x.id === id); return c ? { x: slotX(id), y: laneY(c.task) } : null; }, spineY };
+  const cps = [...(S.checkpoints ?? [])].sort((a, b) => a.version - b.version);
+  // One timeline: contributions and checkpoints in the order they happened.
+  const line = [
+    ...S.contributions.map((c) => ({ k: "c", id: c.id, at: c.createdAt, seq: c.seq })),
+    ...cps.map((cp) => ({ k: "cp", id: `cp${cp.version}`, at: cp.createdAt, seq: 0 })),
+  ].sort((a, b) => a.at.localeCompare(b.at) || a.seq - b.seq);
+  const prop = proposal();
+  const slots = line.length + (prop ? 1 : 0);
+  const avail = $("#plot").clientWidth;
+  const step = Math.max(G.slot, (avail - G.left - G.right) / Math.max(1, slots - 1));
+  G.w = Math.max(avail, G.left + G.right + step * Math.max(1, slots - 1));
+  G.h = G.trunkH + Math.max(1, L.length) * G.laneH + 8;
+  const index = new Map(line.map((e, i) => [e.id, i]));
+  const x = (i) => G.left + i * step;
+  const laneY = (task) => G.trunkH + Math.max(0, L.findIndex((l) => l.id === task)) * G.laneH + G.laneH / 2;
+  const trunkY = G.trunkH / 2 + 4;
+  const pos = (id) => { const c = S.contributions.find((q) => q.id === id); return c ? { x: x(index.get(id)), y: laneY(c.task) } : null; };
+  const bead = (v) => ({ x: x(index.get(`cp${v}`)), y: trunkY });
+  const ghost = prop ? { x: x(line.length), y: trunkY, cand: prop } : null;
+  const ctx = [...S.context];
+  const spineY = (item) => G.trunkH + 14 + ((Math.max(1, L.length) * G.laneH - 28) * Math.max(0, ctx.findIndex((c) => c.id === item))) / Math.max(1, ctx.length - 1);
+  return { L, cps, pos, bead, ghost, trunkY, spineY };
 }
 
-const curve = (x0, y0, x1, y1) => { const dx = Math.max(30, (x1 - x0) / 2); return `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`; };
+const curve = (x0, y0, x1, y1) => { const dx = Math.max(28, (x1 - x0) / 2); return `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`; };
+/** A merge rises from a lane into the trunk: leave horizontally, arrive vertically. */
+const merge = (x0, y0, x1, y1) => `M${x0},${y0} C${x1},${y0} ${x1},${y0} ${x1},${y1}`;
+
+function renderHeads(L) {
+  const heads = [`<div class="lane-head trunk" role="listitem" style="block-size:${G.trunkH}px"><b>Accepted</b><span>${S.head ? `checkpoint ${S.head.version}, ${esc(S.head.commit.slice(0, 7))}` : "not seeded"}</span></div>`];
+  let prevAlt = null;
+  for (const t of L) {
+    const p = t.participant ? who(t.participant) : null;
+    const st = { open: "Open", running: "Working", paused: "Paused", done: "Done", failed: "Stopped" }[t.status] ?? t.status;
+    const acts = owner()
+      ? t.status === "running" ? `<button class="mini" data-pause="${esc(t.id)}" type="button">Pause</button>`
+        : t.status !== "done" ? `<button class="mini" data-start="${esc(t.id)}" type="button">${t.status === "paused" ? "Hand over" : "Start"}</button>` : ""
+      : "";
+    const alt = t.alternative && t.alternative !== prevAlt ? `<span class="alt">Competing: ${esc(t.alternative)}</span>` : "";
+    prevAlt = t.alternative ?? null;
+    heads.push(`<div class="lane-head lane st-${esc(t.status)} ${t.alternative ? "competing" : ""}" role="listitem" data-lane="${esc(t.id)}" style="block-size:${G.laneH}px">
+      ${alt}<b title="${esc(t.title)}">${esc(t.title)}</b>
+      <span class="who-line"><span class="state" aria-label="${esc(st)}"></span>${p ? `${esc(p.name)}, ${esc(p.model.replace(/^anthropic\//, ""))}` : "Unassigned"}${t.epoch > 1 ? `, attempt ${t.epoch}` : ""}${acts}</span>
+    </div>`);
+  }
+  $("#laneHeads").innerHTML = heads.join("");
+}
 
 function renderMap() {
   const svg = $("#map");
   const empty = $("#mapEmpty");
+  const L = lanes();
+  renderHeads(L);
+  const running = S.tasks.filter((t) => t.status === "running").length;
+  $("#mapAside").textContent = running ? `${running} working now` : "";
   if (!S.contributions.length) {
     svg.innerHTML = "";
-    svg.setAttribute("height", 220);
+    svg.setAttribute("height", G.trunkH + Math.max(1, L.length) * G.laneH);
     empty.hidden = false;
-    empty.innerHTML = `<div><h3>No contributions yet</h3><p>${S.tasks.length ? "Agents publish here as they push. Each commit appears as a node in its task's lane." : "Create a task and start an agent or a person on it. Every commit they push appears here."}</p></div>`;
+    empty.innerHTML = `<div><h3>No contributions yet</h3><p>${S.tasks.length ? "Agents publish here as they push. Each commit lands in its task's lane." : "Create a task and start an agent or a person on it. Every commit they push lands here."}</p></div>`;
     return;
   }
   empty.hidden = true;
-  const { L, pos, spineY } = geometry();
+  // Stay with the latest work unless the person has scrolled back in time.
+  const plot = $("#plot");
+  const atEnd = seen.nodes === null || plot.scrollLeft + plot.clientWidth >= plot.scrollWidth - 12;
+  const { cps, pos, bead, ghost, trunkY, spineY } = geometry();
   svg.setAttribute("width", G.w);
   svg.setAttribute("height", G.h);
   svg.setAttribute("viewBox", `0 0 ${G.w} ${G.h}`);
+  const first = seen.nodes === null;
   const out = [`<defs><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" class="hatch-line"/></pattern></defs>`];
-  L.forEach((l, i) => {
-    const y = G.top + i * G.laneH;
-    out.push(`<rect class="lane-bg ${i % 2 ? "alt" : ""}" x="0" y="${y}" width="${G.w}" height="${G.laneH}"/>`);
-    out.push(`<text class="lane-name" x="16" y="${y + G.laneH / 2 + (l.alt ? 0 : 4)}">${esc(l.name.length > 22 ? `${l.name.slice(0, 21)}…` : l.name)}</text>`);
-    if (l.alt) out.push(`<text class="lane-sub" x="16" y="${y + G.laneH / 2 + 15}">choose one: ${esc(l.alt)}</text>`);
-  });
-  const altLanes = L.map((l, i) => ({ ...l, i })).filter((l) => l.alt);
-  for (const group of [...new Set(altLanes.map((l) => l.alt))]) {
-    const ix = altLanes.filter((l) => l.alt === group).map((l) => l.i);
-    if (ix.length < 2) continue;
-    const y0 = G.top + Math.min(...ix) * G.laneH + 12, y1 = G.top + (Math.max(...ix) + 1) * G.laneH - 12;
-    out.push(`<path class="bracket" d="M8,${y0} L4,${y0} L4,${y1} L8,${y1}"/>`);
-  }
-  out.push(`<text class="axis" x="${G.left}" y="20">Earlier</text><text class="axis" x="${G.w - G.right}" y="20" text-anchor="end">Later</text>`);
-  out.push(`<line class="spine" x1="${G.spineX}" y1="${G.top + 6}" x2="${G.spineX}" y2="${G.top + L.length * G.laneH - 6}"/>`);
-  for (const c of S.candidates.filter((x) => !["superseded"].includes(x.status))) {
-    const pts = c.order.map(pos).filter(Boolean).sort((a, b) => a.x - b.x);
-    if (pts.length < 2) continue;
-    let d = `M${pts[0].x},${pts[0].y}`;
-    for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], dx = (b.x - a.x) / 2; d += ` C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; }
-    out.push(`<path class="thread ${c.id === selCand ? "sel" : ""}" d="${d}"/>`);
-  }
+
+  // Rows.
+  out.push(`<rect class="row trunk-row" x="0" y="0" width="${G.w}" height="${G.trunkH}"/>`);
+  L.forEach((_, i) => out.push(`<rect class="row ${i % 2 ? "alt" : ""}" x="0" y="${G.trunkH + i * G.laneH}" width="${G.w}" height="${G.laneH}"/>`));
+  out.push(`<line class="spine" x1="${G.spineX}" y1="${G.trunkH + 8}" x2="${G.spineX}" y2="${G.h - 12}"/>`);
+
+  // The trunk: solid through accepted checkpoints, dashed out to the one you can accept.
+  const beads = cps.map((cp) => ({ cp, ...bead(cp.version) }));
+  if (beads.length) out.push(`<line class="trunk" x1="${beads[0].x}" y1="${trunkY}" x2="${beads.at(-1).x}" y2="${trunkY}"/>`);
+  if (ghost && beads.length) out.push(`<line class="trunk next" x1="${beads.at(-1).x}" y1="${trunkY}" x2="${ghost.x}" y2="${trunkY}"/>`);
+
+  // Dependencies: direct parents only (every commit requires its whole closure, which would be noise).
+  const byId = new Map(S.contributions.map((c) => [c.id, c]));
   const sel = selected?.type === "contrib" ? selected.id : null;
-  for (const c of S.contributions) for (const r of c.requires) {
-    const a = pos(r), b = pos(c.id);
-    if (a && b) out.push(`<path class="dep ${sel && (sel === c.id || sel === r) ? "hl" : ""}" d="${curve(a.x, a.y, b.x, b.y)}"/>`);
+  for (const c of S.contributions) {
+    const direct = c.requires.filter((d) => !c.requires.some((e) => e !== d && byId.get(e)?.requires.includes(d)));
+    for (const d of direct) {
+      const a = pos(d), b = pos(c.id);
+      if (a && b) out.push(`<path class="dep ${sel && (sel === c.id || sel === d) ? "hl" : ""}" d="${curve(a.x, a.y, b.x, b.y)}"/>`);
+    }
   }
-  if (hoverCtx) for (const c of S.contributions) if (c.cites.some((x) => x.item === hoverCtx)) { const p = pos(c.id); out.push(`<path class="cite" d="${curve(G.spineX, spineY(hoverCtx), p.x, p.y)}"/>`); }
-  for (const c of S.context) { const y = spineY(c.id); out.push(`<rect class="spine-mark ${hoverCtx === c.id ? "on" : ""}" data-spine="${esc(c.id)}" x="${G.spineX - 4}" y="${y - 4}" width="8" height="8" transform="rotate(45 ${G.spineX} ${y})"><title>${esc(c.title)}</title></rect>`); }
+
+  // Merges into accepted checkpoints, and the proposal's dashed merges into the next one.
+  const newBeads = new Set();
+  for (const b of beads) {
+    if (!b.cp.candidate) continue;
+    const k = S.candidates.find((x) => x.id === b.cp.candidate);
+    const fresh = !first && !seen.beads?.has(b.cp.version);
+    if (fresh) newBeads.add(b.cp.version);
+    for (const id of k?.order ?? []) {
+      const p = pos(id);
+      if (p) out.push(`<path class="merge ${fresh ? "arrive" : ""}" pathLength="1" d="${merge(p.x, p.y, b.x, trunkY + 9)}"/>`);
+    }
+  }
+  if (ghost) for (const id of ghost.cand.order) { const p = pos(id); if (p) out.push(`<path class="merge next" d="${merge(p.x, p.y, ghost.x, trunkY + 9)}"/>`); }
+
+  // Citations for the hovered context item.
+  if (hoverCtx) for (const c of S.contributions) if (c.cites.some((q) => q.item === hoverCtx)) { const p = pos(c.id); out.push(`<path class="cite" d="${curve(G.spineX, spineY(hoverCtx), p.x, p.y)}"/>`); }
+  for (const c of S.context) { const y = spineY(c.id); out.push(`<circle class="spine-mark ${hoverCtx === c.id ? "on" : ""}" data-spine="${esc(c.id)}" cx="${G.spineX}" cy="${y}" r="3"><title>${esc(c.title)} v${c.version}</title></circle>`); }
   out.push(`<g id="fx"></g>`);
-  const picks = new Set(S.candidates.find((x) => x.id === selCand)?.order ?? []);
+
+  // Checkpoint beads.
+  for (const b of beads) {
+    const contextOnly = !b.cp.candidate;
+    const label = contextOnly ? `Checkpoint ${b.cp.version}: ${b.cp.reason}` : `Checkpoint ${b.cp.version}: ${S.candidates.find((x) => x.id === b.cp.candidate)?.name ?? b.cp.reason}`;
+    out.push(`<g class="bead ${contextOnly ? "ctx" : ""} ${b.cp.version === S.head?.version ? "head" : ""} ${newBeads.has(b.cp.version) ? "arrive" : ""}" data-bead="${b.cp.version}" transform="translate(${b.x},${trunkY})" tabindex="0" role="button" aria-label="${esc(label)}"><circle class="halo" r="16"/><circle class="disc" r="11"/><text>${b.cp.version}</text></g>`);
+  }
+  if (ghost) out.push(`<g class="bead ghost" data-cand="${esc(ghost.cand.id)}" transform="translate(${ghost.x},${trunkY})" tabindex="0" role="button" aria-label="${esc(`Accepting ${ghost.cand.name} makes checkpoint ${(S.head?.version ?? 0) + 1}`)}"><circle class="disc" r="11"/><text>${(S.head?.version ?? 0) + 1}</text></g>`);
+
+  // Contributions.
+  const picks = new Set(ghost?.cand.order ?? []);
   const asks = new Set(openInbox().map((i) => i.target));
+  const nowSeen = new Set();
   for (const c of S.contributions) {
     const p = pos(c.id);
+    nowSeen.add(c.id);
     const person = who(c.author)?.kind === "person";
     const st = isStale(c) ? "stale" : c.status;
     const ticks = reviewsOf(c.id).slice(-4).map((r, i, arr) => {
-      const x = (i - (arr.length - 1) / 2) * 9, y = 22;
-      if (r.kind === "person") return `<rect class="tick ${r.verdict === "approve" ? "hm" : "hm-ch"}" x="${x - 3}" y="${y - 3}" width="6" height="6" rx="1"/>`;
-      if (r.verdict === "approve") return `<circle class="tick ok" cx="${x}" cy="${y}" r="3"/>`;
-      if (r.verdict === "changes" || r.verdict === "comment") return `<circle class="tick ch" cx="${x}" cy="${y}" r="2.8"/>`;
-      return `<path class="tick bl" d="M${x - 3},${y - 3} L${x + 3},${y + 3} M${x + 3},${y - 3} L${x - 3},${y + 3}"/>`;
+      const tx = (i - (arr.length - 1) / 2) * 10, ty = 24;
+      if (r.kind === "person") return `<rect class="tick ${r.verdict === "approve" ? "hm" : "hm-ch"}" x="${tx - 3.5}" y="${ty - 3.5}" width="7" height="7" rx="1.5"/>`;
+      if (r.verdict === "approve") return `<circle class="tick ok" cx="${tx}" cy="${ty}" r="3.3"/>`;
+      if (r.verdict === "changes" || r.verdict === "comment") return `<circle class="tick ch" cx="${tx}" cy="${ty}" r="3"/>`;
+      return `<path class="tick bl" d="M${tx - 3},${ty - 3} L${tx + 3},${ty + 3} M${tx + 3},${ty - 3} L${tx - 3},${ty + 3}"/>`;
     }).join("");
-    const shape = person ? `<rect class="body" x="-10.5" y="-10.5" width="21" height="21" rx="4.5"/>` : `<circle class="body" r="11.5"/>`;
-    const mark = st === "blocked" || st === "changes" ? `<line class="mark" x1="-15" y1="15" x2="15" y2="-15" opacity="0.7"/>` : "";
-    const ini = esc(nameOf(c.author)[0] ?? "?");
-    const label = `${c.title}, by ${nameOf(c.author)}. ${{ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", stale: "Relied on old context", accepted: "Accepted", superseded: "Retired" }[st] ?? st}`;
-    out.push(`<g class="node st-${st} ${sel === c.id ? "sel" : ""}" data-id="${esc(c.id)}" transform="translate(${p.x},${p.y})" tabindex="0" role="button" aria-label="${esc(label)}">${asks.has(c.id) ? `<circle class="ask" r="22"/>` : ""}${picks.has(c.id) ? `<circle class="ring" r="17"/>` : ""}${shape}${mark}<text class="ini">${ini}</text><text class="nid" y="-18">${esc(short(c.id))}</text>${ticks}</g>`);
+    const shape = person ? `<rect class="body" x="-12" y="-12" width="24" height="24" rx="5"/>` : `<circle class="body" r="13"/>`;
+    const mark = st === "blocked" || st === "changes" ? `<line class="mark" x1="-17" y1="17" x2="17" y2="-17"/>` : "";
+    const label = `${c.title}, by ${nameOf(c.author)}. ${{ proposed: "Awaiting review", approved: "Approved", changes: "Changes requested", blocked: "Blocked", stale: "Relied on old context", accepted: "In a checkpoint", superseded: "Retired" }[st] ?? st}`;
+    const arrive = !first && !seen.nodes.has(c.id);
+    out.push(`<g class="node st-${st} ${sel === c.id ? "sel" : ""} ${arrive ? "arrive" : ""}" data-id="${esc(c.id)}" transform="translate(${p.x},${p.y})" tabindex="0" role="button" aria-label="${esc(label)}">${arrive ? `<circle class="pulse" r="13"/>` : ""}${asks.has(c.id) ? `<circle class="ask" r="20"/>` : ""}${picks.has(c.id) ? `<circle class="ring" r="18"/>` : ""}${shape}${mark}<text class="ini">${esc(nameOf(c.author)[0] ?? "?")}</text><text class="nid" y="-20">${esc(short(c.id))}</text>${ticks}</g>`);
   }
   svg.innerHTML = out.join("");
+  seen.nodes = nowSeen;
+  seen.beads = new Set(cps.map((cp) => cp.version));
+  if (atEnd) plot.scrollLeft = plot.scrollWidth;
+  // A new contribution also lights its lane header once.
+  for (const n of svg.querySelectorAll(".node.arrive")) {
+    const c = byId.get(n.dataset.id);
+    $(`.lane-head[data-lane="${CSS.escape(c?.task ?? "")}"]`)?.classList.add("arrive");
+  }
 }
 
 async function ripple(item, ids) {
@@ -334,11 +408,11 @@ const statusLabel = { composing: "Composing", ready: "Ready", waiting: "Waiting 
 function inboxHtml() {
   const items = openInbox();
   if (!items.length) return `<div class="empty"><h4>Nothing needs you right now</h4><p>Agents review every push. You are asked when reviewers disagree, when a review blocks, when protected files change, and when an outcome is ready to accept.</p></div>`;
-  return items.map((i) => {
+  return items.map((i, n) => {
     if (i.kind === "accept") {
       const c = S.candidates.find((x) => x.id === i.target);
       if (!c) return "";
-      return `<div class="card focus"><h4>${esc(c.name)} is ready</h4><p>All checks pass on the composed result and every contribution in it is approved.</p>${checksHtml(c)}
+      return `<div class="card ${n === 0 ? "focus" : ""}"><h4>${esc(c.name)} is ready</h4><p>All checks pass on the composed result and every contribution in it is approved.</p>${checksHtml(c)}
         <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
         ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
         <div class="row">${owner() ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}</div></div>`;
@@ -348,14 +422,14 @@ function inboxHtml() {
       if (!k) return "";
       const members = k.order.map((id) => S.contributions.find((x) => x.id === id)).filter(Boolean);
       const overlapping = members.filter((m) => m.paths.some((p) => (k.conflict ?? "").includes(p)));
-      return `<div class="card focus"><h4>Overlapping work in ${esc(k.name)}</h4><p>Real git could not combine these contributions. Keep one and the others are blocked with that reason, or have an agent reconcile them.</p>
+      return `<div class="card ${n === 0 ? "focus" : ""}"><h4>Overlapping work in ${esc(k.name)}</h4><p>Real git could not combine these contributions. Keep one and the others are blocked with that reason, or have an agent reconcile them.</p>
         <div class="fail-line">${esc(k.conflict ?? "")}</div>
         ${overlapping.map((m) => `<div class="review"><div class="row" style="justify-content:space-between"><span class="who"><b>${esc(nameOf(m.author))}</b><span class="id">${esc(short(m.id))}</span></span>${owner() ? `<button class="btn small" data-keep="${esc(m.id)}" data-among="${esc(overlapping.map((x) => x.id).join(","))}" data-inbox="${esc(i.id)}" type="button">Keep this one</button>` : ""}</div><q>${esc(m.title)}</q><div class="meta"><span class="id">${m.paths.map(esc).join(", ")}</span></div></div>`).join("")}
         ${owner() ? `<div class="row"><button class="btn small primary" data-reconcile="${esc(k.id)}" type="button">Reconcile with an agent</button><button class="btn small" data-resolve="${esc(i.id)}" type="button">Dismiss</button></div>` : ""}</div>`;
     }
     const c = S.contributions.find((x) => x.id === i.target);
     if (!c) return "";
-    return `<div class="card focus"><h4>${esc(c.title)}</h4><p>${esc(nameOf(c.author))} published <span class="id">${esc(short(c.id))}</span>. A person is needed:</p>
+    return `<div class="card ${n === 0 ? "focus" : ""}"><h4>${esc(c.title)}</h4><p>${esc(nameOf(c.author))} published <span class="id">${esc(short(c.id))}</span>. A person is needed:</p>
       <ul class="reasons">${i.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${reviewsOf(c.id).map(reviewHtml).join("")}
       ${owner() ? `<div class="field"><label for="rv-${esc(c.id)}">Your review</label><input id="rv-${esc(c.id)}" placeholder="One sentence: why"></div>
       <div class="row"><button class="btn small primary" data-review="${esc(c.id)}" data-verdict="approve" type="button">Approve</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="changes" type="button">Request changes</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="block" type="button">Block</button></div>` : ""}
@@ -491,14 +565,15 @@ function startTask(id) {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("button, [data-id], [data-ctx]");
+  const t = e.target.closest("button, [data-id], [data-ctx], [data-cand], [data-bead]");
   if (!t) return;
-  if (t.matches(".tab")) { tab = t.id.replace("tab-", ""); renderRight(); return; }
+  if (t.matches(".tab")) { tab = t.id.replace("tab-", ""); transition(renderRight); return; }
   if (t.id === "signInBtn") return signIn();
   if (t.dataset.id) { selected = { type: "contrib", id: t.dataset.id }; tab = "inspect"; render(); return; }
   if (t.dataset.ctx) { selected = { type: "ctx", id: t.dataset.ctx }; tab = "inspect"; render(); return; }
   if (t.dataset.open) { selected = { type: "contrib", id: t.dataset.open }; tab = "inspect"; render(); return; }
-  if (t.dataset.cand) { selCand = t.dataset.cand; renderMap(); renderRight(); return; }
+  if (t.dataset.cand) { selCand = t.dataset.cand; if (t.matches(".bead")) tab = "outcomes"; transition(() => { renderMap(); renderRight(); }); return; }
+  if (t.dataset.bead) { tab = "outcomes"; transition(renderRight); return; }
   if (t.dataset.act === "new-task") return newTask();
   if (t.dataset.act === "compose") return act(() => api("/api/compose", { method: "POST", body: "{}" }), "Composing outcomes");
   if (t.dataset.start) return startTask(t.dataset.start);
@@ -561,17 +636,25 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  const n = e.target.closest?.(".node");
-  if (n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selected = { type: "contrib", id: n.dataset.id }; tab = "inspect"; render(); }
+  const n = e.target.closest?.(".node, .bead");
+  if (n && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    if (n.matches(".bead")) { if (n.dataset.cand) selCand = n.dataset.cand; tab = "outcomes"; transition(() => { renderMap(); renderRight(); }); return; }
+    selected = { type: "contrib", id: n.dataset.id }; tab = "inspect"; render();
+  }
 });
 const tip = $("#tip");
 $("#map").addEventListener("pointermove", (e) => {
-  const n = e.target.closest(".node");
+  const n = e.target.closest(".node, .bead");
   if (!n || !S) { tip.hidden = true; return; }
-  const c = S.contributions.find((x) => x.id === n.dataset.id);
-  tip.innerHTML = `<b>${esc(c.title)}</b><span>${esc(nameOf(c.author))}. ${reviewsOf(c.id).length} reviews.</span>`;
+  if (n.matches(".bead")) {
+    tip.innerHTML = `<b>${esc(n.getAttribute("aria-label"))}</b><span>${n.matches(".ghost") ? "Open Outcomes to review and accept it." : "Open Outcomes for the history."}</span>`;
+  } else {
+    const c = S.contributions.find((x) => x.id === n.dataset.id);
+    tip.innerHTML = `<b>${esc(c.title)}</b><span>${esc(nameOf(c.author))}, ${reviewsOf(c.id).length} reviews.</span>`;
+  }
   const box = $("#mapWrap").getBoundingClientRect();
-  tip.style.left = `${Math.min(box.width - 270, e.clientX - box.left + 14)}px`;
+  tip.style.left = `${Math.max(8, Math.min(box.width - 270, e.clientX - box.left + 14))}px`;
   tip.style.top = `${e.clientY - box.top + 14}px`;
   tip.hidden = false;
 });
