@@ -12,6 +12,7 @@ const css = `
   html, body { width: 1920px; height: 1080px; background: transparent; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #f1f3f5; }
   .bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(17,19,22,.88); padding: 26px 64px 30px; font-size: 31px; line-height: 1.32; letter-spacing: -.005em; max-width: 1920px; }
   .bar p { max-width: 1680px; }
+  .bar.top { bottom: auto; top: 0; padding-top: 30px; }
   .badge { position: absolute; top: 34px; right: 48px; background: #1833eb; color: #f1f3f5; font-weight: 700; font-size: 30px; padding: 8px 16px; border-radius: 4px; letter-spacing: .02em; }
   .card { position: absolute; inset: 0; background: rgba(17,19,22,.84); padding: 0 96px; display: flex; flex-direction: column; justify-content: center; }
   .card h1 { font-size: 84px; letter-spacing: -.035em; font-weight: 700; line-height: 1; }
@@ -24,7 +25,7 @@ const page = await (await browser.newContext({ viewport: { width: 1920, height: 
 const files = [];
 for (const [i, seg] of plan.segments.entries()) {
   const parts = [];
-  if (seg.caption) parts.push(`<div class="bar"><p>${esc(seg.caption)}</p></div>`);
+  if (seg.caption) parts.push(`<div class="bar${seg.position === "top" ? " top" : ""}"><p>${esc(seg.caption)}</p></div>`);
   if ((seg.speed ?? 1) > 1) parts.push(`<div class="badge">${esc(seg.speed)}×</div>`);
   await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>${parts.join("")}</body></html>`);
   const bar = `${outDir}/seg${String(i).padStart(2, "0")}-bar.png`;

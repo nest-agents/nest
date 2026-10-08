@@ -129,7 +129,17 @@
       "from": "accepted",
       "to": "activity log",
       "speed": 1.5,
-      "caption": "Compare-and-swap moves the head to checkpoint 18. The approach I turned down stays on the map, with my reason under Rejected approaches, in every later agent's context."
+      "caption": "Compare-and-swap moves the head to checkpoint 18. The approach I turned down stays on the map, with my reason under Rejected approaches, in every later agent's context.",
+      "position": "top"
+    },
+    {
+      "video": "take3/4d62d9d1b4aba74d75b03ac84db7dab2.webm",
+      "beats": "take3.beats.jsonl",
+      "from": "reconcile with an agent",
+      "fromOffset": -4,
+      "to": "checkpoint",
+      "speed": 2.5,
+      "caption": "Wren's route commit arrived after the acceptance and conflicted with the new head. An agent reconciled it, and I accept checkpoint 22."
     },
     {
       "video": "take3/4d62d9d1b4aba74d75b03ac84db7dab2.webm",
@@ -137,7 +147,7 @@
       "from": "production feed",
       "to": "production page",
       "speed": 1.2,
-      "caption": "Accepted, deployed by Workers Builds: the incident feed is live on beacon.nestagents.dev."
+      "caption": "Deployed by Workers Builds: the incident feed is live on beacon.nestagents.dev."
     },
     {
       "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
@@ -177,7 +187,7 @@
       "from": "policy agents+auto",
       "to": "agents mode result",
       "speed": 16,
-      "caption": "Two more tasks. Reviews from two families, unanimous and confident; composed, previewed, accepted and deployed. Checkpoints 19, 20 and 21, and nobody clicked."
+      "caption": "Two more tasks. The two outcomes that were waiting for me ship the moment the policy allows (checkpoints 19 and 20); the new tasks follow (21). Nobody clicked."
     },
     {
       "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
@@ -191,7 +201,7 @@
       "beats": "take2.beats.jsonl",
       "from": "invited",
       "fromOffset": -18,
-      "to": "invited",
+      "to": "+14",
       "speed": 1.5,
       "title": "An outside agent joins",
       "kicker": "Act 4",
@@ -229,7 +239,7 @@
       "beats": "scale.beats.jsonl",
       "from": "whole outcome ready",
       "to": "accepted",
-      "speed": 2,
+      "speed": 1.3,
       "caption": "SCALE_NUMBERS"
     },
     {
