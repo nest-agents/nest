@@ -69,10 +69,16 @@ export function unusualPath(path: string): boolean {
   return path.split("/").some((s) => s === "" || s === "." || s === ".." || /[. ]$/.test(s));
 }
 
-const protectedMatch = (path: string, rule: string) => {
+/**
+ * A rule ending in "/" is a directory; a rule with a "/" inside is one exact path; a rule without any
+ * names that file anywhere in the tree, since a nested package.json or .npmrc also decides what an install runs.
+ */
+export const protectedMatch = (path: string, rule: string) => {
   const p = path.toLowerCase();
   const q = rule.toLowerCase();
-  return q.endsWith("/") ? p.startsWith(q) || `${p}/` === q : p === q;
+  if (q.endsWith("/")) return p.startsWith(q) || `${p}/` === q;
+  if (!q.includes("/")) return p === q || p.endsWith(`/${q}`);
+  return p === q;
 };
 
 const validConfidence = (c: number) => Number.isFinite(c) && c >= 0 && c <= 1;

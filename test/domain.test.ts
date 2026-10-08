@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canonical, contributionId, parseCitation, parseTrailers } from "../src/protocol";
 import { authoredOn, closure, GraphError, planFrontier, type ContributionNode } from "../src/domain/graph";
 import { blastRadius, staleCitations } from "../src/domain/context";
-import { DEFAULT_POLICY, effectivePolicy, route, type ReviewFact } from "../src/domain/review";
+import { DEFAULT_POLICY, effectivePolicy, protectedMatch, route, type ReviewFact } from "../src/domain/review";
 import { acceptError, type CandidateFacts, type Head } from "../src/domain/accept";
 
 const C = (id: string, seq: number, extra: Partial<ContributionNode> = {}): ContributionNode => ({
@@ -404,3 +404,18 @@ describe("overlap-aware frontier", () => {
     expect(planFrontier(g, new Set())[0]!.order).toEqual(["a", "b"]);
   });
 });
+
+describe("protected paths", () => {
+  it("matches a file rule anywhere, a directory rule as a prefix, and a path rule exactly", () => {
+    expect(protectedMatch("package.json", "package.json")).toBe(true);
+    expect(protectedMatch("apps/web/package.json", "package.json")).toBe(true);
+    expect(protectedMatch("apps/web/.npmrc", ".npmrc")).toBe(true);
+    expect(protectedMatch("docs/package.json.md", "package.json")).toBe(false);
+    expect(protectedMatch(".nest/project.json", ".nest/")).toBe(true);
+    expect(protectedMatch("src/.nest/x", ".nest/")).toBe(false);
+    expect(protectedMatch("src/monitors.ts", "src/monitors.ts")).toBe(true);
+    expect(protectedMatch("lib/src/monitors.ts", "src/monitors.ts")).toBe(false);
+    expect(protectedMatch("Package.JSON", "package.json")).toBe(true);
+  });
+});
+
