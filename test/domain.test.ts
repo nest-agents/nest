@@ -182,6 +182,27 @@ describe("frontier", () => {
     expect(orders[0]).toBe("history,store2,list");
     expect(orders.every((o) => !o.split(",").includes("store"))).toBe(true);
   });
+  it("leaves out work an accepted replacement covers instead of planning nothing", () => {
+    // Live: wren's feed route was replaced by a reconcile that shipped in an outcome; wren's commit kept its
+    // approved status, and the planner's compatibility check threw for the whole selection, so four approved
+    // changes composed into nothing.
+    const g = graph(
+      C("model", 1, { status: "accepted" }),
+      C("feed", 2, { requires: ["model"] }),
+      C("feed2", 3, { requires: ["model"], supersedes: "feed", status: "accepted" }),
+      C("badge", 4),
+      C("docs", 5),
+      C("feed-docs", 6, { requires: ["feed"] }),
+    );
+    const orders = planFrontier(g, new Set(["model", "feed2"])).map((f) => f.order.join(","));
+    expect(orders[0]).toBe("badge,docs,feed-docs");
+    expect(orders.every((o) => !o.split(",").includes("feed"))).toBe(true);
+  });
+  it("composes a replacement of work the checkpoint already holds as a later change", () => {
+    const g = graph(C("api", 1, { status: "accepted" }), C("api2", 2, { supersedes: "api" }), C("ui", 3));
+    expect(planFrontier(g, new Set(["api"])).map((f) => f.order.join(","))[0]).toBe("api2,ui");
+    expect(code(() => closure(g, ["api2", "ui"], new Set(["api"])))).toBe("OK");
+  });
   it("keeps a pending replacement plannable when it sits in an explicit alternative group", () => {
     const g = graph(
       C("enc", 1),

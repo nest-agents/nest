@@ -8,7 +8,7 @@ import { artifactsRemote, candidateBranch, objectiveStub, projectRepo, projectSt
 import type { ObjectiveDO } from "../objective";
 import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
 import { readProjectConfig } from "../projects";
-import { acceptCandidate, mirrorMain } from "../accepting";
+import { acceptCandidate, mirrorMain, reconcileAcceptance } from "../accepting";
 import { reapAttempts, repairBrief, startTask } from "../tasks";
 import { ArtifactsClient } from "../artifacts";
 import { sha256Hex } from "../protocol";
@@ -28,8 +28,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     const mine = await step.do("claim the composer", async () => objective.claimComposer(event.instanceId));
     if (!mine) return { deferred: true };
     try {
-      // Composers run often, so this is where attempts whose workflow died are closed with the reason.
+      // Composers run often, so this is where attempts whose workflow died are closed with the reason,
+      // and where an acceptance cut short between the head swap and its bookkeeping is finished.
       await step.do("close attempts whose workflow died", async () => reapAttempts(this.env, objectiveId));
+      await step.do("finish an acceptance cut short", async () => reconcileAcceptance(this.env, objectiveId));
       return await this.compose(event, step, objective);
     } finally {
       await step.do("release the composer", async () => {
@@ -99,14 +101,30 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     // A conflict between work the new plan no longer combines (for example two competing approaches, now
     // known to be one choice) is not a question for a human any more.
     if (!event.payload.only?.length) {
-      await step.do("retire conflicts the plan dropped", async () => {
+      await step.do("retire outcomes the plan dropped", async () => {
+        // Work that an accepted contribution replaced can never apply again, whoever wrote it.
+        const replaced = await objective.retireReplaced(plan.head.version);
         const planned = new Set(plan.planned.map((c) => c.id));
-        const dropped = (await objective.state()).candidates.filter((k) => k.status === "conflict" && k.baseVersion === plan.head.version && !planned.has(k.id));
+        const state = await objective.state();
+        const gone = (id: string) => ["blocked", "superseded"].includes(state.contributions.find((x) => x.id === id)?.status ?? "");
+        const open = (k: { status: string }) => !["accepted", "superseded"].includes(k.status);
+        // A conflict the plan no longer combines, or an unfinished outcome that holds work since blocked or
+        // retired: neither can be accepted, so neither stays on the board.
+        const dropped = state.candidates.filter((k) => !planned.has(k.id) && open(k) && (k.status === "conflict" || k.order.some(gone)));
         for (const k of dropped) {
-          await objective.updateCandidate(k.id, { status: "superseded", note: "The plan no longer combines this work" });
+          await objective.updateCandidate(k.id, { status: "superseded", note: k.status === "conflict" ? "The plan no longer combines this work" : "A contribution in it was blocked or retired" });
           await objective.resolveInbox(`conflict-${k.id}`, "no longer planned");
+          await objective.resolveInbox(`accept-${k.id}`, "no longer planned");
         }
-        return { retired: dropped.map((k) => k.id) };
+        // The head moves for every objective on the project. An outcome built on an older checkpoint, in this
+        // objective or left behind by a sibling's acceptance, cannot be accepted and is marked so.
+        const behind = state.candidates.filter((k) => !planned.has(k.id) && open(k) && k.status !== "outdated" && !dropped.includes(k) && k.baseVersion < plan.head.version);
+        for (const k of behind) {
+          await objective.updateCandidate(k.id, { status: "outdated", note: `Built on checkpoint ${k.baseVersion}; the head is ${plan.head.version}` });
+          await objective.resolveInbox(`conflict-${k.id}`, "the head moved");
+          await objective.resolveInbox(`accept-${k.id}`, "the head moved");
+        }
+        return { retired: dropped.map((k) => k.id), outdated: behind.map((k) => k.id), replaced };
       });
     }
 
@@ -115,15 +133,15 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
      * the runner. `publish` pushes the branch the project's pipeline builds as a Preview; it is true only when
      * every contribution in the outcome is approved, so unreviewed code never reaches a build.
      */
-    const runOn = async (id: string, order: string[], publish: boolean) => {
+    const runOn = async (id: string, order: string[], publish: boolean, branch: string = candidateBranch(id)) => {
       const name = `runner-${id}`;
       const computer = env.COMPUTERS.getByName(name);
       try {
         const result = await computer.compose(
-          { computer: name, role: "runner", project: plan.project, objective: objectiveId, candidate: id, publish },
+          { computer: name, role: "runner", project: plan.project, objective: objectiveId, candidate: id, publish, branch },
           { remote: artifactsRemote(env, projectRepo(plan.project)), commit: plan.head.commit },
           order.map((cid) => ({ id: cid, remote: artifactsRemote(env, plan.picks[cid]!.repo), commit: plan.picks[cid]!.commit })),
-          candidateBranch(id), publish,
+          branch, publish,
         );
         if (!result.ok) return { result, checks: [] as Check[] };
         const composed: Check = {
@@ -144,17 +162,20 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
      * connected to the repository). A real browser opens the outcome's own deployment until it exists, and
      * the first time it answers is the check: the page must load without errors.
      */
-    const previewCheck = async (id: string): Promise<Check | null> => {
+    const previewCheck = async (id: string, branch: string): Promise<Check | null> => {
       if (!plan.config?.preview) return null;
-      const url = previewUrl(plan.config, candidateBranch(id));
-      if (!url) return { id: "preview", status: "ERROR", detail: `no preview URL for branch ${candidateBranch(id)}` };
+      const url = previewUrl(plan.config, branch);
+      if (!url) return { id: "preview", status: "ERROR", detail: `no preview URL for branch ${branch}` };
       let last = "nothing answered";
       for (let i = 0; i < PREVIEW_PROBES; i++) {
         if (i) await step.sleep(`preview ${id}: wait ${i}`, "30 seconds");
         const seen = await step.do(`preview ${id}: open ${i}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
           await objective.claimComposer(event.instanceId); // re-stamps the lease for the holder
           const r = await smokeCheck(env, url);
-          const deployed = r.httpStatus > 0 && r.httpStatus < 400;
+          // The branch is this composition's own, so whatever answers is this tree's deployment. An answer
+          // from the platform for a hostname with nothing behind it is not a deployment; an answer from the
+          // code, whatever its status, is.
+          const deployed = r.httpStatus > 0 && !r.notDeployed;
           if (deployed && r.screenshot) await env.OBJECTS.put(`shots/${id}.png`, r.screenshot, { httpMetadata: { contentType: "image/png" } });
           return { deployed, check: { id: r.check.id, status: r.check.status, detail: `${url} ${r.check.detail}` } };
         });
@@ -162,7 +183,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         last = seen.check.detail;
       }
       // Nothing deployed: the project's pipeline did not build the branch. That is not the code's doing.
-      return { id: "preview", status: "ERROR", detail: `no deployment answered within ${PREVIEW_PROBES / 2} minutes of the push, so the project's pipeline did not build ${candidateBranch(id)}; last: ${last}`.slice(0, 600) };
+      return { id: "preview", status: "ERROR", detail: `no deployment answered within ${PREVIEW_PROBES / 2} minutes of the push, so the project's pipeline did not build ${branch}; last: ${last}`.slice(0, 600) };
     };
 
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
@@ -178,7 +199,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         if (!r.result.ok) throw new Error(`checkpoint ${plan.head.version} did not check out on its own: ${r.result.detail.slice(0, 300)}`);
         return r.checks;
       });
-      const preview = await previewCheck(baselineId);
+      // The baseline id is a digest of the checkpoint, so its branch only ever carries that checkpoint's tree.
+      const preview = await previewCheck(baselineId, candidateBranch(baselineId));
       const measured = [...own, ...(preview ? [preview] : [])];
       await step.do(`checkpoint ${plan.head.version}: record baseline`, async () => {
         await objective.setBaseline(baselineKey, measured);
@@ -226,7 +248,9 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
         const fresh = await objective.state();
         const approved = c.order.every((id) => fresh.contributions.find((x) => x.id === id)?.status === "approved");
-        const r = await runOn(c.id, c.order, approved && !!plan.config?.preview);
+        // Every composition gets its own branch, so the preview opened later can only be this tree's.
+        const branch = await objective.nextBranch(c.id);
+        const r = await runOn(c.id, c.order, approved && !!plan.config?.preview, branch);
         const result = r.result;
         // A conflict names the files git could not merge. Anything else (clone, fetch, push) is ours: retry.
         if (!result.ok && (!result.paths.length || ["clone", "base", "push"].includes(result.at))) throw new Error(`composition failed at ${result.at}: ${result.detail.slice(0, 300)}`);
@@ -251,12 +275,12 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           svc: "Sandbox",
           text: `Composed ${c.name} with real git and ran the project's checks: ${passed} of ${r.checks.length} passed${plan.config?.preview ? "; waiting for its preview deployment" : ""}`,
         });
-        return { ok: true as const, commit: result.commit, checks: r.checks, published: result.published };
+        return { ok: true as const, commit: result.commit, checks: r.checks, published: result.published, branch };
       });
       if (!composed.ok) return { id: c.id, conflict: true };
 
       const preview: Check | null = !plan.config?.preview ? null
-        : composed.published ? await previewCheck(c.id)
+        : composed.published ? await previewCheck(c.id, composed.branch)
         : { id: "preview", status: "PENDING", detail: "The preview is built once every contribution in this outcome is approved, so unreviewed code never reaches a build" };
 
       return step.do(`settle ${c.id}`, async () => {
@@ -365,8 +389,12 @@ async function openRepair(env: Env, objectiveId: string, candidateId: string, na
     id, title: `Repair ${name.replace(/^Outcome: /, "")}`, baseVersion, baseCommit,
     brief: repairBrief(candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`, detail),
   });
-  // One automatic repair at a time: a cascade is impossible whatever else goes wrong.
-  if (env.AUTO_REPAIR_AGENT && !(await objective.repairRunning())) {
-    await startTask(env, objectiveId, id, env.AUTO_REPAIR_AGENT, "agent").catch((e) => objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`));
+  // One automatic repair at a time, claimed inside the Durable Object: a cascade is impossible whatever
+  // else goes wrong, and two regressions found at the same moment start one repair, not two.
+  if (env.AUTO_REPAIR_AGENT && (await objective.claimRepair(id))) {
+    await startTask(env, objectiveId, id, env.AUTO_REPAIR_AGENT, "agent").catch(async (e) => {
+      await objective.releaseRepair(id);
+      await objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`);
+    });
   }
 }

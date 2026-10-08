@@ -79,9 +79,11 @@ Dockerfiles, to `protected`.
 outcome is a Preview of the project's Worker at the HTTPS address the project's configuration names for the
 branch. Preview settings must use Preview-only resources and no production secrets; Durable Object storage
 is separate per Preview automatically. Browser Rendering opens the Preview in a browser that holds no Nest
-credentials and judges only what the browser saw: the HTTP status and uncaught page errors. It does not
-verify which commit answered: a branch composed again reuses its address, and an older deployment that is
-still up can answer the first visit.
+credentials and judges only what the browser saw: the HTTP status and uncaught page errors. Every
+composition pushes a branch of its own (`cand-<id>`, then `cand-<id>-2`, and so on), so whatever answers at
+that address is this tree's deployment and never an older one. A Preview the pipeline never deployed carries
+the platform's own marker (`x-preview-user-error`); Nest reads it, composes the outcome again once, and
+otherwise leaves it incomplete. A 4xx or 5xx without that marker is the application's and breaks the check.
 
 **Identity is derived, never declared.**
 - A review's reviewer kind and model family come from the participant registry, and both are immutable once
@@ -89,8 +91,8 @@ still up can answer the first visit.
 - Authors never count as reviewers of their own work.
 - Task tokens are HMAC-signed per attempt and objective generation.
 - Participant tokens are HMAC-signed per participant revision. Rotating a participant revokes every
-  participant token issued before. An attempt that participant already started keeps its task token and
-  its one-hour fork token until it ends; stop the attempt to cut those off.
+  participant token issued before and stops the attempts it had running. A task token lives exactly as long
+  as its attempt, and a fork's write tokens are revoked when the attempt ends, however it ends.
 - A session cookie acts only from Nest's own origin: an unsafe request whose `Origin` is not this Worker's
   is treated as signed out, so a page on a sibling hostname (a Preview) cannot post with the owner's cookie.
 
@@ -169,25 +171,19 @@ Previews.
 
 ## Known limitations
 
-Found by a read-only review on 2026-10-08 and not yet fixed; each is a narrow window or an operator path,
-and none is hidden by the text above.
+What the design leaves open, stated so nobody has to find it:
 
-- **Eligibility and the head swap are two steps.** A review that turns to a block between acceptance's
-  check and the Project Durable Object's compare-and-swap is not seen by the swap.
-- **Acceptance after the swap is not resumable.** If the request dies between advancing the head and
-  marking the candidate accepted, the candidate stays ready against a head it no longer matches; the owner
-  resolves it by composing again.
-- **Reviews are not bound to context versions.** An approval given against `req/x@v1` still counts after
-  `req/x@v2`; the blast radius recomposes the outcome but does not ask for a fresh review.
-- **Mirror catch-up depends on the next composition.** A `main` that failed to move is fast-forwarded by the
-  next composer, not by a queue of its own; a context-only checkpoint in between does not trigger it.
-- **A Preview answered by an older deployment** of the same branch can satisfy the browser visit (above).
-- **An undeployed Preview and an application error look alike** to the browser (both answer 4xx/5xx), so
-  an outcome whose Preview answers 500 is composed again once rather than marked as breaking a check.
-- **Manual forks start from the fork's `main`**, which is the head in every normal case; the managed agent
-  workflow resets to the exact commit, the manual path does not.
-- **Two automatic repairs can start together** if two regressions are detected at the same moment.
-- **Rotation does not stop running attempts** (above).
+- **A review that lands during an acceptance does not stop it.** Acceptance verifies every member's approval
+  and freezes the outcome; a verdict recorded in the moment before the head swap is kept, and shown against
+  the accepted contribution, but the acceptance stands. Reviews before the freeze decide; the freeze is
+  short (one Durable Object call).
+- **A human's approval stands across context versions.** When a cited requirement changes, the agent
+  reviews of every contribution that cited it are set aside and asked again; a human's approval is not
+  withdrawn, because the human can read the new version and the agents cannot be assumed to have.
+- **A citation is the author's claim.** Nest records `item@vN` and checks the version at acceptance; it
+  cannot know what an author read and did not cite.
+- **Spend is a meter, not a bill.** The ledger prices tokens from a table of list prices; AI Gateway's own
+  accounting is the authority, and the two are reconciled by visible correction entries, never by rewriting.
 
 ## How the code was hardened
 
@@ -216,5 +212,16 @@ family satisfying agents-only review; a misfiled reviewer family counting as ind
 notes reaching models unwrapped; unreadable or uncomputable diffs passing as reviewed; paused patches of two
 objectives sharing one key; the approved part of an outcome losing its competing-group marker; and the
 price table. The rest are listed under known limitations.
+
+The nine limitations that review left open were closed the same day. Acceptance is fenced: the objective
+verifies readiness and every member's approval in one transaction and freezes the outcome, and only then does
+the Project Durable Object swap its head; a swap that succeeds but whose bookkeeping is cut short is finished
+by the next composer from the project's own record. Agent reviews are bound to the context versions they
+read. A `main` that fell behind is caught up by every composer, context-only checkpoints included. Each
+composition has a branch of its own, and an undeployed Preview is told from an application error by the
+platform's marker. Manual forks are moved to the exact head before the token is handed out. One automatic
+repair runs at a time. Rotation stops the participant's running attempts, and a fork's tokens are revoked
+when its attempt ends. An objective can be deleted whole (records, Durable Object and forks), and a context
+item can be removed as a context-only checkpoint; the routing policy cannot.
 
 The commit history records each fix.

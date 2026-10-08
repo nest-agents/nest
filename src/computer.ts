@@ -30,6 +30,8 @@ export type ComputerProps = {
   candidate?: string;
   /** Runner only: every contribution in the candidate is approved, so its buildable branch may be pushed. */
   publish?: boolean;
+  /** Runner only: the branch this composition publishes to (`cand-<id>`, `cand-<id>-2`, ...). */
+  branch?: string;
 };
 
 const CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
@@ -214,7 +216,7 @@ export class Computer extends DurableObject<Env> {
   async compose(props: ComputerProps, base: { remote: string; commit: string }, picks: { id: string; remote: string; commit: string }[], branch: string, publish: boolean): Promise<{ ok: true; commit: string; tree: string; published: boolean } | { ok: false; at: string; paths: string[]; detail: string; partial?: string }> {
     const host = `https://${this.env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${this.env.ARTIFACTS_NAMESPACE}/`;
     const sha = /^[0-9a-f]{40}$/;
-    if (!/^cand-[a-z0-9-]{4,64}$/.test(branch) || !props.candidate || branch !== candidateBranch(props.candidate)) throw new Error("invalid candidate branch");
+    if (!/^cand-[a-z0-9-]{4,64}$/.test(branch) || !props.candidate || branch !== (props.branch ?? candidateBranch(props.candidate))) throw new Error("invalid candidate branch");
     if (publish !== !!props.publish) throw new Error("publish must match the computer's props");
     const keep = candidateRef(props.candidate);
     for (const r of [base.remote, ...picks.map((p) => p.remote)]) if (!r.startsWith(host) || !/^[A-Za-z0-9._\/:-]+$/.test(r)) throw new Error(`invalid remote ${r}`);
@@ -348,7 +350,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
         readable = isProject || !!ws;
         // Whether the buildable branch may be pushed was decided by Nest before composing; Outbound allows
         // exactly this candidate's two refs.
-        pushRef = props.candidate ? { repo: projectRepo(props.project), refs: [candidateRef(props.candidate), ...(props.publish ? [`refs/heads/${candidateBranch(props.candidate)}`] : [])] } : null;
+        pushRef = props.candidate ? { repo: projectRepo(props.project), refs: [candidateRef(props.candidate), ...(props.publish ? [`refs/heads/${props.branch ?? candidateBranch(props.candidate)}`] : [])] } : null;
         break;
       case "mirror":
         readable = isProject;

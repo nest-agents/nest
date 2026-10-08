@@ -3,7 +3,7 @@
 
 import { ArtifactsClient } from "./artifacts";
 import { authenticate, participantToken, type Principal } from "./auth";
-import { acceptCandidate, changeContext } from "./accepting";
+import { acceptCandidate, changeContext, reconcileAcceptance, removeContext } from "./accepting";
 import { ensureReviews, ingestPush } from "./ingest";
 import { handleMcp } from "./mcp";
 import { objectiveStub, projectStub, registryStub, taskWorkflowId, workspaceRepo } from "./names";
@@ -12,7 +12,7 @@ import { ConfigError } from "./projectconfig";
 import { bootstrapProject, createObjective, createProject, objectivePolicy, readProjectConfig, syncRoster } from "./projects";
 import { chat, isPriced, parseJsonReply } from "./models";
 import { OBJECTIVE_ID, PROJECT_ID } from "./registry";
-import { reapAttempts, reconcileConflict, repairOutcome, requestCompose, startTask, stopTask } from "./tasks";
+import { reapAttempts, reconcileConflict, repairOutcome, requestCompose, startTask, stopParticipantAttempts, stopTask } from "./tasks";
 
 export { RegistryDO } from "./registry";
 export { ProjectDO } from "./project";
@@ -123,7 +123,10 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     require(p, "owner");
     if (!(await registry.participant(rotate[1]!))) throw new HttpError(404, "NOT_FOUND");
     const rev = await registry.rotateParticipant(rotate[1]!);
-    return json({ id: rotate[1], token: await participantToken(env, rotate[1]!, rev) });
+    // Every token issued before is void, and so is every attempt the participant was running: a task
+    // token dies with its attempt.
+    const stopped = await stopParticipantAttempts(env, rotate[1]!);
+    return json({ id: rotate[1], token: await participantToken(env, rotate[1]!, rev), stopped });
   }
   if (route === "GET /api/spend") return json(await registry.spend());
 
@@ -147,18 +150,8 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     const b = await body<{ prefix: string; dryRun?: boolean }>(request);
     // Only an objective's workspace repositories, never a project or context repository.
     if (!/^[a-z][a-z0-9-]{1,46}[a-z0-9]\.([0-9a-f]{8}--)?/.test(b.prefix ?? "") || !String(b.prefix).includes(".")) throw new HttpError(400, "BAD_PREFIX", "prefix must name an objective's workspaces, as <objective>.<generation>");
-    const names: string[] = [];
-    let cursor: string | undefined;
-    for (let page = 0; page < 50; page++) {
-      const r = await env.ARTIFACTS.list({ limit: 100, cursor });
-      for (const repo of r.repos) if (repo.name.startsWith(b.prefix)) names.push(repo.name);
-      cursor = r.cursor;
-      if (!cursor) break;
-    }
-    if (b.dryRun) return json({ matched: names.length, sample: names.slice(0, 5) });
-    let deleted = 0;
-    for (let i = 0; i < names.length; i += 20) deleted += (await Promise.all(names.slice(i, i + 20).map((n) => env.ARTIFACTS.delete(n).catch(() => false)))).filter(Boolean).length;
-    return json({ matched: names.length, deleted });
+    const r = await new ArtifactsClient(env.ARTIFACTS).deleteByPrefix(String(b.prefix), !!b.dryRun);
+    return json(b.dryRun ? { matched: r.matched.length, sample: r.matched.slice(0, 5) } : { matched: r.matched.length, deleted: r.deleted });
   }
 
   if (route === "POST /api/admin/gateway/probe") {
@@ -243,6 +236,12 @@ async function projectApi(request: Request, env: Env, p: Principal, projectId: s
     const b = await body<{ id: string; body: string; title?: string; kind?: string }>(request);
     return json(await changeContext(env, projectId, { id: String(b.id ?? ""), body: String(b.body ?? ""), title: b.title, kind: b.kind }));
   }
+  if (route === "POST /context/remove") {
+    require(p, "owner");
+    const b = await body<{ id: string }>(request);
+    if (!/^[a-z]+\/[a-z0-9][a-z0-9-]{0,60}$/.test(String(b.id ?? ""))) throw new HttpError(400, "INVALID_CONTEXT_ID");
+    return json(await removeContext(env, projectId, String(b.id)));
+  }
   if (route === "POST /objectives") {
     require(p, "owner");
     const b = await body<{ id: string; title: string; criteria?: string[] }>(request);
@@ -271,6 +270,18 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
   const project = projectStub(env, projectId);
   const route = `${request.method} ${rest || "/"}`;
 
+  if (route === "DELETE /") {
+    // An objective is removed whole: the registry forgets it, its Durable Object is emptied and its forks
+    // leave Artifacts. Its spend stays in the ledger as recorded, and the project's checkpoints are the
+    // project's.
+    require(p, "owner");
+    const running = (await objective.state()).tasks.filter((t) => t.status === "running");
+    if (running.length) throw new HttpError(409, "TASKS_RUNNING", `stop ${running.map((t) => t.id).join(", ")} first`);
+    await registry.deleteObjective(objectiveId);
+    await objective.destroy();
+    const forks = await new ArtifactsClient(env.ARTIFACTS).deleteByPrefix(`${objectiveId}.`);
+    return json({ deleted: objectiveId, forks: forks.deleted });
+  }
   if (route === "GET /") {
     const [head, checkpoints, context, notes, state, spend, info] = await Promise.all([
       project.head(), project.checkpoints(), project.context(), project.notes(), objective.state(), registry.spend(objectiveId), registry.project(projectId),
@@ -419,7 +430,7 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     // Recovery: readiness recomputed from reviews, and a review started for any contribution without one.
     require(p, "owner");
     await objective.promoteOutcomes();
-    return json({ reviews: await ensureReviews(env, objectiveId), attempts: await reapAttempts(env, objectiveId) });
+    return json({ reviews: await ensureReviews(env, objectiveId), attempts: await reapAttempts(env, objectiveId), acceptances: await reconcileAcceptance(env, objectiveId) });
   }
 
   const reconcile = /^\/candidates\/(k[0-9a-f]{10})\/reconcile$/.exec(rest);

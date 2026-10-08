@@ -14,8 +14,21 @@ export class AcceptError extends Error {
   }
 }
 
+/**
+ * Finishes any acceptance that was cut short between the project's head swap and the objective's
+ * bookkeeping, from the project's own record of which outcome its head came from.
+ */
+export async function reconcileAcceptance(env: Env, objectiveId: string): Promise<string[]> {
+  const objective = objectiveStub(env, objectiveId);
+  const projectId = (await objective.state()).objective.project;
+  if (!projectId) return [];
+  const head = await projectStub(env, projectId).head();
+  return head ? objective.reconcileAcceptance(head) : [];
+}
+
 export async function acceptCandidate(env: Env, objectiveId: string, candidateId: string, expectedVersion: number, contextReview: string | null, reason: string | null = null) {
   const objective = objectiveStub(env, objectiveId);
+  await reconcileAcceptance(env, objectiveId);
   const state = await objective.state();
   const projectId = state.objective.project;
   if (!projectId) throw new AcceptError("NOT_INITIALIZED");
@@ -42,10 +55,21 @@ export async function acceptCandidate(env: Env, objectiveId: string, candidateId
   const error = acceptError(head, { candidateId, expectedVersion, expectedContextDigest: head.contextDigest, expectedPolicyDigest: head.policyDigest }, facts);
   if (error) throw new AcceptError(error);
 
-  const checkpoint = await project.advance(
-    { version: expectedVersion, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
-    c.commit, candidateId, reason?.trim() || contextReview?.trim() || `Accepted ${c.name}`,
-  );
+  // Fenced in two steps: the objective verifies readiness and every member's approval inside one
+  // transaction and freezes them as "accepting"; only then does the project swap its head. A swap the
+  // project refuses puts the outcome back; a swap that succeeds is finished here or, if this request dies
+  // first, by the next composer from the project's own record.
+  await objective.beginAccept(candidateId);
+  let checkpoint;
+  try {
+    checkpoint = await project.advance(
+      { version: expectedVersion, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
+      c.commit, candidateId, reason?.trim() || contextReview?.trim() || `Accepted ${c.name}`,
+    );
+  } catch (e) {
+    await objective.abortAccept(candidateId);
+    throw e;
+  }
   await objective.markAccepted(candidateId, checkpoint);
   // The accepted tree may change the project's configuration, including its protected paths.
   await refreshPolicies(env, projectId).catch((e) => objective.log("Nest", "policy", `Could not refresh review policy: ${String(e).slice(0, 200)}`));
@@ -86,13 +110,21 @@ export async function acceptCandidate(env: Env, objectiveId: string, candidateId
  * code, may move main. A composer calls this again whenever it finds main behind the head.
  */
 export async function mirrorMain(env: Env, projectId: string, objectiveId: string, head: { version: number; commit: string; candidate: string | null }, production: string | null): Promise<boolean> {
-  if (!head.candidate) return true; // a context-only checkpoint keeps the commit main already has
+  // A context-only checkpoint keeps the commit of the last code checkpoint; that one's candidate ref is
+  // where the commit can be fetched from, so a mirror that failed earlier is still caught up.
+  let candidate = head.candidate;
+  if (!candidate) {
+    const code = (await projectStub(env, projectId).checkpoints()).filter((c) => c.candidate && c.commit === head.commit).pop();
+    if (!code?.candidate) return true;
+    candidate = code.candidate;
+  }
+  const ref = candidateRef(candidate);
   const objective = objectiveStub(env, objectiveId);
   const name = `mirror.${projectId}`;
   const mirror = env.COMPUTERS.getByName(name);
   await mirror.configure({ computer: name, role: "mirror", project: projectId, objective: objectiveId });
   const remote = artifactsRemote(env, projectRepo(projectId));
-  const r = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateRef(head.candidate)} && git merge --ff-only --quiet ${head.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  const r = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${ref} && git merge --ff-only --quiet ${head.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
   await objective.log("Artifacts", "mirror", r.exitCode === 0
     ? `Fast-forwarded ${projectId} main to ${head.commit.slice(0, 7)}${production ? `; production deploys from main to ${production}` : ""}`
     : `Could not move ${projectId} main to checkpoint ${head.version}; the next composition tries again: ${r.stderr.slice(0, 200)}`);
@@ -138,6 +170,11 @@ export async function changeContext(env: Env, projectId: string, input: { id: st
     const objective = objectiveStub(env, o.id);
     const radius = await objective.blastRadius(parsed.id, parsed.version);
     await objective.markCandidatesOutdated(radius.candidates);
+    // Reviews are bound to the context they read: the agent reviews of work that cited the old version no
+    // longer count, and that work is reviewed again under the new one.
+    for (const id of await objective.staleReviews(radius.contributions)) {
+      await env.REVIEWS.create({ id: `review-${id}-v${parsed.version}-${checkpoint.version}`, params: { objective: o.id, contribution: id } }).catch(() => undefined);
+    }
     radii[o.id] = { contributions: radius.contributions.length, candidates: radius.candidates.length, tasks: radius.tasks.length };
     await objective.log("Durable Objects", "context", cur
       ? `Accepted ${parsed.id} version ${parsed.version}. Blast radius: ${radius.contributions.length} contributions, ${radius.candidates.length} outcomes, ${radius.tasks.length} running tasks cited version ${cur.version}`
@@ -162,4 +199,26 @@ export async function changeContext(env: Env, projectId: string, input: { id: st
   const mirrored = await writer.execWithInput(["bash", "-lc", script], nextText).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
   if (mirrored.exitCode !== 0) console.warn(`context repo ${contextRepo(projectId)} will catch up: ${mirrored.stderr.slice(0, 200)}`);
   return { checkpoint, item: { id: parsed.id, version: parsed.version }, radius: radii, mirrored: mirrored.exitCode === 0 };
+}
+
+/**
+ * A human removes a context item: a context-only checkpoint without it, a deletion commit in the context
+ * repository, and a line in every objective's log. Work that cited it keeps its citations as written.
+ */
+export async function removeContext(env: Env, projectId: string, id: string) {
+  const project = projectStub(env, projectId);
+  const head = await project.head();
+  if (!head) throw new AcceptError("NOT_BOOTSTRAPPED");
+  const { checkpoint, removed } = await project.removeContext(head.version, id);
+  for (const o of await registryStub(env).objectives(projectId)) {
+    await objectiveStub(env, o.id).log("Durable Objects", "context", `Removed ${id} (${removed.title}) at checkpoint ${checkpoint.version}`, { item: id });
+  }
+  const name = `context.${projectId}`;
+  const writer = env.COMPUTERS.getByName(name);
+  await writer.configure({ computer: name, role: "context", project: projectId, objective: "-" });
+  const repo = artifactsRemote(env, contextRepo(projectId));
+  const script = `rm -rf /workspace/ctx && git clone --quiet ${repo} /workspace/ctx && cd /workspace/ctx && git rm --quiet -f ${removed.path} && git -c user.name="Nest" -c user.email=context@nest.invalid commit --quiet -m "Remove ${id}" && git push --quiet origin HEAD:main`;
+  const mirrored = await writer.exec(["bash", "-lc", script], "/workspace").catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  if (mirrored.exitCode !== 0) console.warn(`context repo ${contextRepo(projectId)} will catch up: ${mirrored.stderr.slice(0, 200)}`);
+  return { checkpoint, removed: id, mirrored: mirrored.exitCode === 0 };
 }

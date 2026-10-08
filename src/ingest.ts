@@ -92,13 +92,17 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
 export async function ensureReviews(env: Env, objectiveId: string): Promise<{ started: string[]; failed: string[] }> {
   const objective = objectiveStub(env, objectiveId);
   const state = await objective.state();
-  const reviewed = new Set(state.reviews.map((r) => r.target));
+  // A review that went stale (the context it read has changed) does not count as a review.
+  const reviewed = new Set(state.reviews.filter((r) => !r.stale).map((r) => r.target));
+  const everReviewed = new Set(state.reviews.map((r) => r.target));
   const started: string[] = [];
   const failed: string[] = [];
   for (const c of state.contributions) {
     if (c.status !== "proposed" || reviewed.has(c.id)) continue;
     try {
-      await env.REVIEWS.create({ id: `review-${c.id}`, params: { objective: objectiveId, contribution: c.id } });
+      // The first review of a contribution has a fixed id; a review after staleness is a new workflow.
+      const id = everReviewed.has(c.id) ? `review-${c.id}-${Date.now().toString(36)}` : `review-${c.id}`;
+      await env.REVIEWS.create({ id, params: { objective: objectiveId, contribution: c.id } });
       started.push(c.id);
     } catch (e) {
       const m = String((e as Error)?.message ?? e);

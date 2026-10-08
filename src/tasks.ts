@@ -3,7 +3,7 @@
 
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { agentComputer, objectiveStub, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
+import { agentComputer, artifactsRemote, objectiveStub, projectRepo, projectStub, registryStub, taskWorkflowId, workspaceRepo } from "./names";
 import { boundary, wrapUntrusted } from "./untrusted";
 
 /** Asks for a composition; one runs per objective, and a request during one makes it compose again. */
@@ -55,6 +55,21 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
 
   if (mode === "manual") {
     // A human or external agent pushing from their own machine: a short-lived write token for this fork only.
+    // The fork copies the project's main; when the head is elsewhere (main not yet caught up, or a repair's
+    // composed tree), the fork is moved to the exact commit first, by a computer in this workspace's role.
+    if (from && (await artifacts.head(repo).catch(() => null)) !== from) {
+      const computer = env.COMPUTERS.getByName(agentComputer(repo));
+      const props = { computer: agentComputer(repo), role: "agent" as const, project: projectId, objective: objectiveId, task: taskId, epoch, workspace: repo };
+      try {
+        const ready = await computer.prepareAgent(props, artifactsRemote(env, repo), { name: "Nest", email: "nest@agents.nest.invalid" });
+        if (ready.exitCode !== 0) throw new Error(ready.stderr.slice(-300));
+        const r = await computer.exec(["bash", "-lc", `git fetch --quiet ${artifactsRemote(env, projectRepo(projectId))} ${from} && git reset --quiet --hard FETCH_HEAD && git push --quiet --force origin HEAD:main`], "/workspace/repo");
+        if (r.exitCode !== 0) throw new Error(r.stderr.slice(-300));
+        await objective.log("Artifacts", "fork", `Moved ${repo} to ${from.slice(0, 7)}, the exact head, before handing it over`, { task: taskId, epoch });
+      } finally {
+        await computer.destroy("fork prepared").catch(() => undefined);
+      }
+    }
     const token = await artifacts.token(repo, "write", 3600);
     using r = await env.ARTIFACTS.get(repo);
     const info = await r.info();
@@ -66,6 +81,7 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
   } catch (e) {
     // Never leave an attempt marked running without a workflow behind it.
     await objective.finishAttempt(taskId, epoch, "failed", `Could not start the workflow: ${String(e).slice(0, 200)}`);
+    await closeFork(env, objectiveId, repo, taskId, epoch);
     throw new TaskError("WORKFLOW_START_FAILED", String(e).slice(0, 300));
   }
   return { repo, epoch, workflow };
@@ -75,6 +91,30 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
  * Stops a task's current attempt from outside: the agent is killed, committed work is pushed and
  * registered, the attempt is closed and its workflow ends. Also the recovery path for a stuck attempt.
  */
+/** Rotating a participant ends every attempt it is running, so nothing issued to it keeps acting. */
+/**
+ * A fork's tokens live exactly as long as its attempt. Whatever ended the attempt (the agent finished, the
+ * owner stopped it, a pause, a workflow that never started), every token still active on the fork is revoked.
+ */
+export async function closeFork(env: Env, objectiveId: string, repo: string, taskId: string, epoch: number): Promise<number> {
+  const n = await new ArtifactsClient(env.ARTIFACTS).revokeAll(repo).catch(() => 0);
+  if (n > 0) await objectiveStub(env, objectiveId).log("Artifacts", "fork", `Revoked ${n} token${n === 1 ? "" : "s"} on ${repo}: its attempt ended`, { task: taskId, epoch, repo }).catch(() => undefined);
+  return n;
+}
+
+export async function stopParticipantAttempts(env: Env, participantId: string): Promise<string[]> {
+  const stopped: string[] = [];
+  for (const o of await registryStub(env).objectives()) {
+    const objective = objectiveStub(env, o.id);
+    for (const t of (await objective.state()).tasks) {
+      if (t.status !== "running" || t.participant !== participantId) continue;
+      await stopTask(env, o.id, t.id).catch(() => undefined);
+      stopped.push(`${o.id}/${t.id}`);
+    }
+  }
+  return stopped;
+}
+
 export async function stopTask(env: Env, objectiveId: string, taskId: string) {
   const objective = objectiveStub(env, objectiveId);
   const t = await objective.task(taskId);
@@ -92,6 +132,7 @@ export async function stopTask(env: Env, objectiveId: string, taskId: string) {
     await computer.destroy("stopped by the owner").catch(() => undefined);
   }
   await objective.finishAttempt(taskId, t.epoch, "failed", "Stopped by the owner");
+  if (t.repo) await closeFork(env, objectiveId, t.repo, taskId, t.epoch);
   const instance = await env.TASKS.get(taskWorkflowId(await objective.generation(), taskId, t.epoch)).catch(() => null);
   await instance?.terminate().catch(() => undefined);
   return { stopped: taskId, epoch: t.epoch, published };

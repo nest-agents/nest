@@ -9,6 +9,7 @@ import { agentComputer, artifactsRemote, objectiveStub, parseWorkspaceRepo, proj
 import { buildPack } from "../packs";
 import { citeOf } from "../context";
 import { readProjectConfig } from "../projects";
+import { closeFork } from "../tasks";
 
 /**
  * `from` is the commit the attempt starts from: the head, or the composed tree a repair fixes. `handover`
@@ -199,6 +200,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         notes.push(...progress);
         const handover: Handover = { patch: key, head: stopped.head, notes, by: pid };
         await objective.pause(tid, epoch, JSON.stringify(handover));
+        await closeFork(env, oid, repo, tid, epoch);
         await objective.log("R2", "handover", `Saved ${setup.who.name}'s portable checkpoint: ${short(stopped.head || "-------")}${key ? " plus uncommitted work" : ""}, ${notes.length} notes`, { task: tid, epoch });
         await computer.destroy("paused");
         return { paused: true, published: results.length };
@@ -217,6 +219,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const why = !ok ? (st.state === "running" ? "; stopped after the time limit" : `; ${st.tail?.slice(-200) ?? st.state}`)
         : published === 0 && st.tail?.trim() ? `; the agent ended without publishing. Its last output: ${st.tail.trim().slice(-300)}` : "";
       await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${published} contributions published${dirty ? `; ${dirty} files left uncommitted` : ""}${why}`);
+      await closeFork(env, oid, repo, tid, epoch);
       await computer.destroy("task finished");
       return { ok, results };
     });

@@ -57,6 +57,30 @@ export class ArtifactsClient {
     return repo.revokeToken(tokenOrId);
   }
 
+  /** Revokes every active token of a repository. A fork's tokens live exactly as long as its attempt. */
+  async revokeAll(repoName: string): Promise<number> {
+    using repo = await this.binding.get(repoName);
+    const { tokens } = await repo.listTokens();
+    let n = 0;
+    for (const t of tokens) if (t.state === "active" && (await repo.revokeToken(t.id).catch(() => false))) n++;
+    return n;
+  }
+
+  /** Deletes every repository whose name starts with `prefix`, twenty at a time. */
+  async deleteByPrefix(prefix: string, dryRun = false): Promise<{ matched: string[]; deleted: number }> {
+    const matched: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page++) {
+      const r = await this.binding.list({ limit: 100, cursor });
+      for (const repo of r.repos) if (repo.name.startsWith(prefix)) matched.push(repo.name);
+      cursor = r.cursor;
+      if (!cursor) break;
+    }
+    let deleted = 0;
+    if (!dryRun) for (let i = 0; i < matched.length; i += 20) deleted += (await Promise.all(matched.slice(i, i + 20).map((n) => this.binding.delete(n).catch(() => false)))).filter(Boolean).length;
+    return { matched, deleted };
+  }
+
   async head(repoName: string, ref = "main"): Promise<string | null> {
     using repo = await this.binding.get(repoName);
     const log = await repo.log({ ref, limit: 1 });

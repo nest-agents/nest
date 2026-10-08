@@ -53,12 +53,40 @@ export class ProjectDO extends DurableObject<Env> {
   }
 
   private current(): ContextItem[] {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS removed_items(id TEXT PRIMARY KEY, at TEXT NOT NULL)");
     return this.sql
       .exec<Record<string, string | number | null>>(
-        `SELECT c.* FROM context_items c JOIN (SELECT id, MAX(version) v FROM context_items GROUP BY id) m ON c.id = m.id AND c.version = m.v ORDER BY c.id`,
+        `SELECT c.* FROM context_items c JOIN (SELECT id, MAX(version) v FROM context_items GROUP BY id) m ON c.id = m.id AND c.version = m.v
+         WHERE c.id NOT IN (SELECT id FROM removed_items) ORDER BY c.id`,
       )
       .toArray()
       .map(rowToItem);
+  }
+
+  /**
+   * A human removes a context item. Its versions stay in the table (history is never rewritten); the
+   * item simply stops being current, which is a context-only checkpoint like any other change.
+   */
+  async removeContext(expectedVersion: number, id: string): Promise<{ checkpoint: Checkpoint; removed: ContextItem }> {
+    const head = this.head();
+    if (!head) throw new ProjectError("NOT_BOOTSTRAPPED");
+    if (head.version !== expectedVersion) throw new ProjectError("BASELINE_MOVED");
+    const removed = this.current().find((i) => i.id === id);
+    if (!removed) throw new ProjectError("NOT_FOUND", `no context item ${id}`);
+    if (id === "policy/review-routing") throw new ProjectError("PROTECTED", "the review policy can be changed, not removed");
+    const next = this.current().filter((i) => i.id !== id);
+    const { contextDigest, policyDigest } = await this.digests(next);
+    const now = new Date().toISOString();
+    this.ctx.storage.transactionSync(() => {
+      const again = this.head()!;
+      if (again.version !== expectedVersion) throw new ProjectError("BASELINE_MOVED");
+      this.sql.exec("INSERT OR IGNORE INTO removed_items VALUES (?, ?)", id, now);
+      this.sql.exec(
+        "INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+        again.version + 1, `cp-${again.version + 1}`, again.commit, contextDigest, policyDigest, `Removed ${id}`, now,
+      );
+    });
+    return { checkpoint: this.head()!, removed };
   }
 
   private async digests(items: ContextItem[]) {

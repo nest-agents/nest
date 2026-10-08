@@ -9,8 +9,8 @@ export type SmokeResult = { id: "preview"; status: "PASS" | "FAIL" | "ERROR"; de
 
 const MAX_ERRORS = 5;
 
-/** `httpStatus` is what the page answered, or 0 when nothing answered; under 400 means the deployment exists. */
-export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Promise<{ check: SmokeResult; screenshot: Uint8Array | null; httpStatus: number }> {
+/** `httpStatus` is what the page answered, or 0 when nothing answered. `notDeployed` is true when the platform answered for a hostname with no deployment. */
+export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Promise<{ check: SmokeResult; screenshot: Uint8Array | null; httpStatus: number; notDeployed: boolean }> {
   const result = (status: SmokeResult["status"], detail: string): SmokeResult => ({ id: "preview", status, detail: detail.slice(0, 600) });
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
   try {
@@ -23,16 +23,20 @@ export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Pro
     page.on("console", (m) => { if (m.type() === "error" && consoleErrors.length < MAX_ERRORS) consoleErrors.push(m.text().slice(0, 200)); });
     const response = await page.goto(url, { waitUntil: "networkidle0", timeout: timeoutMs });
     const status = response?.status() ?? 0;
+    // A preview hostname with no deployment behind it is answered by the platform's own page, which
+    // carries this header; a deployed Worker's error page does not. That is the difference between
+    // "nothing built" and "the code answered with an error".
+    const notDeployed = !!response && response.headers()["x-preview-user-error"] !== undefined;
     await new Promise((r) => setTimeout(r, 300));
     const screenshot = await shot(page);
-    if (status === 0 || status >= 400) return { check: result("FAIL", `answered HTTP ${status || "nothing"}`), screenshot, httpStatus: status };
-    if (pageErrors.length) return { check: result("FAIL", `uncaught errors on the page: ${pageErrors.join("; ")}`), screenshot, httpStatus: status };
+    if (status === 0 || status >= 400) return { check: result("FAIL", `answered HTTP ${status || "nothing"}`), screenshot, httpStatus: status, notDeployed };
+    if (pageErrors.length) return { check: result("FAIL", `uncaught errors on the page: ${pageErrors.join("; ")}`), screenshot, httpStatus: status, notDeployed };
     return {
       check: result("PASS", `loads with HTTP ${status}${consoleErrors.length ? `; console errors: ${consoleErrors.join("; ")}` : ", no errors"}`),
-      screenshot, httpStatus: status,
+      screenshot, httpStatus: status, notDeployed,
     };
   } catch (e) {
-    return { check: result("ERROR", `browser: ${String((e as Error)?.message ?? e)}`), screenshot: null, httpStatus: 0 };
+    return { check: result("ERROR", `browser: ${String((e as Error)?.message ?? e)}`), screenshot: null, httpStatus: 0, notDeployed: false };
   } finally {
     await browser?.close().catch(() => undefined);
   }

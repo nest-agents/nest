@@ -103,12 +103,15 @@ export function closure(nodes: Map<string, ContributionNode>, selected: string[]
     order.push(id);
   };
   for (const id of [...new Set(selected)].sort(bySeq)) visit(id);
-  assertCompatible(nodes, [...order, ...accepted]);
+  assertCompatible(nodes, [...order, ...accepted], accepted);
   return order;
 }
 
-/** One option per alternative group, and never a contribution together with the one it supersedes. */
-export function assertCompatible(nodes: Map<string, ContributionNode>, ids: Iterable<string>): void {
+/**
+ * One option per alternative group, and never a contribution together with the one it supersedes. A
+ * replacement of work the checkpoint already holds is a later change to that work, not a choice against it.
+ */
+export function assertCompatible(nodes: Map<string, ContributionNode>, ids: Iterable<string>, accepted: Set<string> = new Set()): void {
   const groups = new Map<string, ContributionNode>();
   const set = new Set(ids);
   for (const id of set) {
@@ -120,7 +123,7 @@ export function assertCompatible(nodes: Map<string, ContributionNode>, ids: Iter
         throw new GraphError("ALTERNATIVE_CONFLICT", `${prior.id} and ${id} are alternatives in ${n.alternative}`);
       groups.set(n.alternative, n);
     }
-    if (n.supersedes && set.has(n.supersedes))
+    if (n.supersedes && set.has(n.supersedes) && !accepted.has(n.supersedes))
       throw new GraphError("SUPERSEDED_SELECTED", `${id} replaces ${n.supersedes}; select one`);
   }
 }
@@ -140,14 +143,19 @@ export function planFrontier(
   const live = [...nodes.values()].filter(
     (n) => !accepted.has(n.id) && n.status !== "blocked" && n.status !== "superseded" && n.status !== "accepted",
   );
+  const settledIn = (n: ContributionNode) => accepted.has(n.id) || n.status === "accepted";
   // Superseding your own work retires it at once (its status says so). A replacement of someone else's
-  // work, which only a human-requested reconcile can publish, takes effect once it is approved; until
-  // then both stay plannable, and closure never selects both.
-  const replaced = new Set(live.filter((n) => n.status === "approved" || nodes.get(n.supersedes ?? "")?.status === "superseded").map((n) => n.supersedes).filter((x): x is string => !!x));
+  // work, which only a human-requested reconcile can publish, takes effect once it is approved or accepted;
+  // until then both stay plannable, and closure never selects both. The original's own status may lag
+  // (the replacement was accepted as part of an outcome), so the planner reads the edge, not the status.
+  const replaced = new Set([...nodes.values()]
+    .filter((n) => n.supersedes && (n.status === "approved" || settledIn(n) || nodes.get(n.supersedes)?.status === "superseded"))
+    .map((n) => n.supersedes!));
   // Work built on a contribution that was replaced is carried onto its replacement: git replays the
   // dependent's own change on top of the replacement's tree, and a real overlap still shows as a conflict.
+  // An accepted replacement is in the base, so the dependent then needs nothing beyond the checkpoint.
   const replacementOf = new Map<string, string>();
-  for (const n of live) if (n.supersedes && replaced.has(n.supersedes) && !replaced.has(n.id)) replacementOf.set(n.supersedes, n.id);
+  for (const n of nodes.values()) if ((live.includes(n) || settledIn(n)) && n.supersedes && replaced.has(n.supersedes) && !replaced.has(n.id)) replacementOf.set(n.supersedes, n.id);
   const follow = (id: string) => { let x = id; for (let i = 0; i < 16 && replacementOf.has(x); i++) x = replacementOf.get(x)!; return x; };
   if (replacementOf.size) {
     const view = new Map(nodes);

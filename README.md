@@ -139,9 +139,9 @@ from the owner.
 - Nest reads this file from the accepted checkpoint, never from a contribution.
 - Setup and checks run in a fresh container on every composed outcome. The container can install from
   the npm registry but reach nothing else.
-- `preview` is optional. When the project's Worker is connected to Workers Builds, Nest pushes a `cand-<id>`
-  branch for each outcome once all of its contributions are approved; it becomes a Preview, and Nest opens
-  it in a real browser. Preview settings should use Preview-only resources and no production secrets.
+- `preview` is optional. When the project's Worker is connected to Workers Builds, Nest pushes a branch of
+  its own for each composition (`cand-<id>`, then `cand-<id>-2`) once all of the outcome's contributions
+  are approved; it becomes a Preview, and Nest opens it in a real browser. Preview settings should use Preview-only resources and no production secrets.
 - `.nest/`, `package.json`, lockfiles, package-manager configuration and Wrangler configuration need a
   human, unless the human hands dependency and build changes to agents in the policy; `.nest/` never.
   `protected` adds more, such as Dockerfiles or build scripts.

@@ -413,7 +413,7 @@ function shotHtml(c) {
 function previewHref(c) {
   const pv = S.config?.preview;
   if (!pv || !c.previewReady) return null;
-  try { return new URL(pv.path, pv.url.replace("{branch}", `cand-${c.id}`)).toString(); } catch { return null; }
+  try { return new URL(pv.path, pv.url.replace("{branch}", c.branch || `cand-${c.id}`)).toString(); } catch { return null; }
 }
 const previewLink = (c) => { const h = previewHref(c); return h ? `<a class="btn small" href="${esc(h)}" target="_blank" rel="noopener">Open preview</a>` : ""; };
 

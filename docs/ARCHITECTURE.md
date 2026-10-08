@@ -113,17 +113,22 @@ few humans, that breaks in three places.
       Cherry-pick is a three-way merge, so independent edits to one file combine, and a real overlap stops
       with the exact paths.
    2. The runner pushes the result to `refs/nest/cand/<id>` in the project's repository. Only when every
-      contribution in the outcome is approved does it also push the branch `cand-<id>`, which the project's
-      pipeline builds. That is the runner's last use of git.
+      contribution in the outcome is approved does it also push a branch the project's pipeline builds. Each
+      composition gets a branch of its own (`cand-<id>` the first time, `cand-<id>-2` the next), so the
+      address can only ever answer with this tree. That is the runner's last use of git.
    3. It runs the project's setup and checks on the whole tree, and is then destroyed.
-   4. The project's Worker builds `cand-<id>` as a Preview. An outcome whose members are not all approved
-      yet shows its preview check as held; it is composed again once the last approval arrives. Nest opens that URL in Browser Rendering every 30
-      seconds until a deployment answers. That visit is the check: the page must load without uncaught
-      errors, and its screenshot goes on the outcome card.
-7. **Accept.** The human accepts a ready outcome. Acceptance verifies that every required check passed and
-   every member is approved, then the Project Durable Object advances the head by compare-and-swap on the
-   version and the context and policy digests (the eligibility check and the swap are not one transaction;
-   see the limitations in SECURITY.md). Losing
+   4. The project's Worker builds that branch as a Preview. An outcome whose members are not all approved
+      yet shows its preview check as held; it is composed again once the last approval arrives. Nest opens
+      the URL in Browser Rendering every 30 seconds until a deployment answers. That visit is the check: the
+      page must load without uncaught errors, and its screenshot goes on the outcome card. A Preview the
+      pipeline never deployed answers with the platform's own marker (`x-preview-user-error`), which is the
+      pipeline's doing, not the code's: the outcome is composed again once.
+7. **Accept.** The human accepts a ready outcome. Acceptance is fenced: the objective verifies, in one
+   transaction, that every required check passed and every member is approved, and freezes the outcome as
+   accepting so no review can change a member meanwhile; then the Project Durable Object advances the head
+   by compare-and-swap on the version and the context and policy digests. A refused swap puts the outcome
+   back; a swap that succeeded but whose bookkeeping was cut short is finished by the next composer from the
+   project's own record of which outcome its head came from. Losing
    approaches become notes carrying the human's reason. A mirror computer, which never runs candidate code,
    fast-forwards the project's `main`, and Workers Builds deploys it to production.
 
@@ -139,9 +144,10 @@ Inputs: live contributions, their dependencies, groups, and which files each one
   plan picks one option per group, and accepting one retires the others with everything built on them.
 - **Implicit choices.** Independent contributions that create the same file cannot compose, so they become a
   choice automatically.
-- **Replacements.** A reconcile's work replaces the contribution it re-creates once it is approved. Work
-  that depended on the original is carried onto the replacement: git replays its own change on top, and a
-  real overlap still shows as a conflict.
+- **Replacements.** A reconcile's work replaces the contribution it re-creates once it is approved or
+  accepted; the planner reads the edge, not the original's status. Work that depended on the original is
+  carried onto the replacement: git replays its own change on top, and a real overlap still shows as a
+  conflict. When the replacement is accepted, the original is retired, whoever wrote it.
 - **What could ship now.** Beside each whole outcome the planner offers its approved part, so work that
   waits for a human never holds back work that is ready. With auto-accept on, that is what ships.
 - **Ranking.** Whole outcomes come before fragments of other outcomes, then ready before waiting, then the
@@ -203,8 +209,9 @@ authored by an agent and approved by that human. A human's review decides over a
 - **Blast radius.** A new version finds, in every objective of the project, the contributions and outcomes
   that cited the old one, and every running task (which may be reading it now). Their outcomes become
   outdated and are recomposed. If the accepted checkpoint now fails a check it passed when accepted, a
-  repair opens. Reviews are not bound to the version they read: an approval given against v1 still counts
-  after v2.
+  repair opens. Agent reviews are bound to the version they read: those contributions are routed again and
+  reviewed afresh; a human's approval stands. A context item can also be removed, as a context-only
+  checkpoint, except the routing policy.
 - **Rejected approaches.** Accepting an outcome that turns an approach down writes a note with the human's
   reason and the reviews against it. Every later pack carries it.
 - **Search.** `nest search` and `nest_search` are a keyword search over the current items and notes, and
@@ -278,6 +285,16 @@ Each was found in a real run on Cloudflare and is fixed in the commit history.
   ledger. The table now carries list prices, and because both the input and the output price were off by
   the same factor, the ledger is corrected exactly by one visible negative entry per objective
   (`POST /api/admin/spend/correct`), with the original entries left as written.
+- **An accepted replacement left its original approved.** A reconcile replaced wren's feed route and shipped
+  inside an outcome; wren's commit kept its approved status, and the planner's compatibility check, which
+  refuses a contribution together with the one that replaced it, threw for the whole selection. Four
+  approved changes composed into nothing, with no error anywhere. The planner now reads the replacement
+  edge from accepted work as well as approved work, acceptance retires what an accepted contribution
+  replaces whoever wrote it, and every composer applies the same rule to records that predate it.
+- **Outcomes aged in place when a sibling moved the head.** Objectives share a project, so one objective's
+  acceptance moves the head under every other's outcomes. One built on checkpoint 16 still sat on a board
+  whose head was 23. A composer now marks every outcome built on an older checkpoint outdated, in whichever
+  objective it finds them.
 - **Packs put the task's files first.** The repository section of a pack read files in a fixed order
   (instructions, source, tests, the rest, alphabetically), so on a 164-module library an agent asked about
   `zip.ts` got `add.ts` through `mapValues.ts` and not its own module. Files the task names now come first.

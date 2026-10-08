@@ -114,6 +114,10 @@ export class RegistryDO extends DurableObject<Env> {
     this.sql.exec("UPDATE participants SET family = ? WHERE id = ?", family, id);
     return this.participant(id);
   }
+  /** Forgets an objective; its Durable Object is emptied by the caller. Spend stays in the ledger as recorded. */
+  deleteObjective(id: string): boolean {
+    return this.sql.exec("DELETE FROM objectives WHERE id = ?", id).rowsWritten > 0;
+  }
   /** Invalidates every token issued to this participant so far. */
   rotateParticipant(id: string): number {
     this.sql.exec("UPDATE participants SET rev = rev + 1 WHERE id = ?", id);

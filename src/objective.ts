@@ -23,11 +23,15 @@ export type Contribution = {
 export type Review = {
   id: string; target: string; reviewer: string; kind: ParticipantKind; family: string; verdict: Verdict; confidence: number;
   summary: string; findings: { path?: string; line?: number; text: string; severity?: string; cite?: string }[]; triage: boolean; createdAt: string;
+  /** True once a context item the contribution cited changed after this review was written. */
+  stale: boolean;
 };
 export type Candidate = {
   id: string; name: string; baseVersion: number; baseCommit: string; contextDigest: string; policyDigest: string;
   order: string[]; choice: Record<string, string>; status: string; commit: string | null; checks: { id: string; status: string; detail: string; atHead?: string | null }[];
   previewReady: boolean; note: string | null; conflict: string | null; createdAt: string;
+  /** How many times it has been composed, and the branch its latest composition was published to. */
+  build: number; branch: string | null;
 };
 export type InboxItem = { id: string; kind: string; target: string; reasons: string[]; status: string; createdAt: string; resolution: string | null };
 /** `data` is a JSON string so events cross Workers RPC with exact types; parse it where needed. */
@@ -54,6 +58,11 @@ export class ObjectiveDO extends DurableObject<Env> {
     const has = (table: string, col: string) => this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray().some((r) => r.name === col);
     if (!has("contributions", "flags")) this.sql.exec("ALTER TABLE contributions ADD COLUMN flags TEXT NOT NULL DEFAULT '[]'");
     if (!has("contributions", "adds")) this.sql.exec("ALTER TABLE contributions ADD COLUMN adds TEXT NOT NULL DEFAULT '[]'");
+    // A review is bound to the context it read: when a cited item changes, the review goes stale.
+    if (!has("reviews", "stale")) this.sql.exec("ALTER TABLE reviews ADD COLUMN stale INTEGER NOT NULL DEFAULT 0");
+    // Every composition of an outcome gets its own branch, so an older deployment can never answer for a newer tree.
+    if (!has("candidates", "build")) this.sql.exec("ALTER TABLE candidates ADD COLUMN build INTEGER NOT NULL DEFAULT 0");
+    if (!has("candidates", "branch")) this.sql.exec("ALTER TABLE candidates ADD COLUMN branch TEXT");
     if (!has("tasks", "base_commit")) this.sql.exec("ALTER TABLE tasks ADD COLUMN base_commit TEXT");
     if (!has("contributions", "retired")) this.sql.exec("ALTER TABLE contributions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0");
   }
@@ -291,6 +300,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("UPDATE attempts SET ended_at = ?, outcome = ? WHERE task = ? AND epoch = ?", new Date().toISOString(), outcome, taskId, epoch);
       this.sql.exec("UPDATE tasks SET status = ? WHERE id = ?", outcome, taskId);
+      if (this.meta("repair") === taskId) this.sql.exec("DELETE FROM meta WHERE k = 'repair'");
     });
     this.emit("Durable Objects", "attempt-end", `${t.title}: attempt ${epoch} ${outcome}. ${detail}`.slice(0, 400), { task: taskId, epoch, outcome });
     return this.task(taskId)!;
@@ -476,19 +486,19 @@ export class ObjectiveDO extends DurableObject<Env> {
    * The reviewer must be a registered participant. Kind and family come from the registry, never
    * from the caller, so a review cannot claim to be a human's or another model family's.
    */
-  addReview(input: Omit<Review, "createdAt" | "kind" | "family">, cites: Citation[] = []): { review: Review; routing: Routing } {
+  addReview(input: Omit<Review, "createdAt" | "kind" | "family" | "stale">, cites: Citation[] = []): { review: Review; routing: Routing } {
     const target = this.contribution(input.target);
     if (!target) throw new ObjectiveError("NOT_FOUND", `no contribution ${input.target}`);
     const reviewer = this.participant(input.reviewer);
     if (!reviewer) throw new ObjectiveError("UNKNOWN_REVIEWER", input.reviewer);
     if (input.triage && reviewer.harness !== "triage") throw new ObjectiveError("NOT_TRIAGE", input.reviewer);
     if (!["approve", "changes", "block", "comment"].includes(input.verdict)) throw new ObjectiveError("INVALID_VERDICT");
-    const r: Omit<Review, "createdAt"> = { ...input, kind: reviewer.kind, family: reviewer.family, confidence: Number.isFinite(input.confidence) ? input.confidence : 0 };
+    const r: Omit<Review, "createdAt"> = { ...input, kind: reviewer.kind, family: reviewer.family, confidence: Number.isFinite(input.confidence) ? input.confidence : 0, stale: false };
     const existing = this.sql.exec<Row>("SELECT id FROM reviews WHERE id = ?", r.id).toArray()[0];
     if (!existing) {
       this.ctx.storage.transactionSync(() => {
         this.sql.exec(
-          "INSERT INTO reviews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO reviews (id, target, reviewer, kind, family, verdict, confidence, summary, findings, triage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           r.id, r.target, r.reviewer, r.kind, r.family, r.verdict, r.confidence, r.summary.slice(0, 4000), JSON.stringify(r.findings.slice(0, 40)), r.triage ? 1 : 0, new Date().toISOString(),
         );
         for (const cite of cites) this.sql.exec("INSERT OR IGNORE INTO citations VALUES (?, 'review', ?, ?, ?)", r.id, cite.item, cite.version, cite.lines ? JSON.stringify(cite.lines) : null);
@@ -508,8 +518,26 @@ export class ObjectiveDO extends DurableObject<Env> {
     return rows.map((r) => ({
       id: String(r.id), target: String(r.target), reviewer: String(r.reviewer), kind: String(r.kind) as ParticipantKind, family: String(r.family),
       verdict: String(r.verdict) as Verdict, confidence: Number(r.confidence), summary: String(r.summary), findings: JSON.parse(String(r.findings)),
-      triage: Number(r.triage) === 1, createdAt: String(r.created_at),
+      triage: Number(r.triage) === 1, createdAt: String(r.created_at), stale: Number(r.stale ?? 0) === 1,
     }));
+  }
+
+  /**
+   * A context item these contributions cited has a new version: the agent reviews written against the old
+   * one no longer count, and each contribution is routed again, which asks for fresh reviews.
+   */
+  staleReviews(contributionIds: string[]): string[] {
+    const touched: string[] = [];
+    for (const id of contributionIds) {
+      const c = this.contribution(id);
+      if (!c || ["accepted", "superseded", "blocked"].includes(c.status)) continue;
+      const n = this.sql.exec("UPDATE reviews SET stale = 1 WHERE target = ? AND kind = 'agent' AND triage = 0 AND stale = 0", id).rowsWritten;
+      if (!n) continue;
+      touched.push(id);
+      this.emit("Durable Objects", "review", `${c.title}: its reviews read a requirement that has since changed; it is reviewed again`, { contribution: id });
+      this.reroute(id);
+    }
+    return touched;
   }
 
   routing(contributionId: string): Routing {
@@ -518,7 +546,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     const author = this.participant(c.author);
     // A reviewer's family is its lineage as the roster knows it now, so a review written when a model was
     // misfiled (Plover's gpt-oss counted as its host, not as OpenAI) is weighed by the corrected family.
-    const facts: ReviewFact[] = this.reviews(c.id).map((r) => ({ reviewer: r.reviewer, kind: r.kind, family: this.participant(r.reviewer)?.family ?? r.family, verdict: r.verdict, confidence: r.confidence, triage: r.triage }));
+    const facts: ReviewFact[] = this.reviews(c.id).filter((r) => !r.stale).map((r) => ({ reviewer: r.reviewer, kind: r.kind, family: this.participant(r.reviewer)?.family ?? r.family, verdict: r.verdict, confidence: r.confidence, triage: r.triage }));
     return route(this.policy(), {
       author: c.author, authorKind: author?.kind ?? "agent", authorFamily: author?.family ?? "unknown",
       paths: c.paths.map((p) => (typeof p === "string" ? p : (p as { path: string }).path)), citedItems: c.cites.map((x) => x.item), specialEntries: c.special,
@@ -532,6 +560,9 @@ export class ObjectiveDO extends DurableObject<Env> {
     if (!c) throw new ObjectiveError("NOT_FOUND");
     const routing = this.routing(contributionId);
     if (c.status === "superseded" || c.status === "accepted") return routing;
+    // While an outcome it belongs to is being accepted, a member's status is frozen: the acceptance
+    // verified it and the head swap must see what was verified.
+    if (this.sql.exec<Row>("SELECT 1 FROM candidates WHERE status = 'accepting' AND order_json LIKE ? LIMIT 1", `%"${contributionId}"%`).toArray()[0]) return routing;
     const status: ContributionStatus =
       routing.state === "approved" ? "approved" : routing.state === "changes" ? "changes" : routing.state === "blocked" ? "blocked" : "proposed";
     if (status !== c.status) this.sql.exec("UPDATE contributions SET status = ? WHERE id = ?", status, contributionId);
@@ -618,15 +649,89 @@ export class ObjectiveDO extends DurableObject<Env> {
     return planFrontier(nodes, new Set(accepted), limit);
   }
 
-  upsertCandidate(c: Omit<Candidate, "createdAt">): Candidate {
+  upsertCandidate(c: Omit<Candidate, "createdAt" | "build" | "branch">): Candidate {
     this.sql.exec(
-      `INSERT INTO candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO candidates (id, name, base_version, base_commit, context_digest, policy_digest, order_json, choice, status, commit_sha, checks, preview_ready, note, conflict, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET status = excluded.status, commit_sha = excluded.commit_sha, checks = excluded.checks,
          preview_ready = excluded.preview_ready, note = excluded.note, conflict = excluded.conflict`,
       c.id, c.name, c.baseVersion, c.baseCommit, c.contextDigest, c.policyDigest, JSON.stringify(c.order), JSON.stringify(c.choice), c.status,
       c.commit, JSON.stringify(c.checks), c.previewReady ? 1 : 0, c.note, c.conflict, new Date().toISOString(),
     );
     return this.candidate(c.id)!;
+  }
+
+  /**
+   * Each composition publishes to its own branch (`cand-<id>`, then `cand-<id>-2`, ...), so the preview a
+   * browser opens can only be the deployment of the tree just composed, never of an earlier one.
+   */
+  nextBranch(candidateId: string): string {
+    const build = Number(this.sql.exec<Row>("SELECT build FROM candidates WHERE id = ?", candidateId).toArray()[0]?.build ?? 0) + 1;
+    const branch = build === 1 ? `cand-${candidateId}` : `cand-${candidateId}-${build}`;
+    this.sql.exec("UPDATE candidates SET build = ?, branch = ? WHERE id = ?", build, branch, candidateId);
+    return branch;
+  }
+
+  /**
+   * Acceptance in two fenced steps. `beginAccept` verifies, inside one transaction, that the outcome is
+   * ready and every member is approved, and marks it "accepting" so no review can change a member until
+   * the head has moved. If the Project refuses the swap, `abortAccept` returns it to ready.
+   */
+  beginAccept(candidateId: string): Candidate {
+    return this.ctx.storage.transactionSync(() => {
+      const c = this.candidate(candidateId);
+      if (!c) throw new ObjectiveError("NOT_FOUND");
+      if (c.status === "accepting") return c;
+      if (c.status !== "ready") throw new ObjectiveError("NOT_READY", `this outcome is ${c.status}`);
+      const members = c.order.map((id) => this.contribution(id));
+      if (!members.every((m) => m?.status === "approved")) throw new ObjectiveError("NOT_APPROVED", "a contribution in this outcome is no longer approved");
+      this.sql.exec("UPDATE candidates SET status = 'accepting' WHERE id = ?", candidateId);
+      return this.candidate(candidateId)!;
+    });
+  }
+
+  abortAccept(candidateId: string): void {
+    const c = this.candidate(candidateId);
+    this.sql.exec("UPDATE candidates SET status = 'ready' WHERE id = ? AND status = 'accepting'", candidateId);
+    // Reviews recorded while the outcome was frozen take effect now.
+    for (const id of c?.order ?? []) this.reroute(id);
+  }
+
+  /**
+   * An acceptance cut short between the head swap and the bookkeeping is finished from the Project's own
+   * record: if the head names an outcome still marked "accepting", it is accepted now; otherwise the swap
+   * never happened and the outcome is ready again.
+   */
+  reconcileAcceptance(head: { candidate: string | null; version: number }): string[] {
+    const done: string[] = [];
+    for (const r of this.sql.exec<Row>("SELECT id FROM candidates WHERE status = 'accepting'").toArray()) {
+      const id = String(r.id);
+      if (head.candidate === id) {
+        this.markAccepted(id, head);
+        this.emit("Durable Objects", "accept", `Finished accepting ${id}: the head had moved to checkpoint ${head.version} before the bookkeeping completed`, { candidate: id });
+      } else this.abortAccept(id);
+      done.push(id);
+    }
+    return done;
+  }
+
+  /** One automatic repair at a time, decided inside the Durable Object rather than by two readers at once. */
+  claimRepair(taskId: string): boolean {
+    return this.ctx.storage.transactionSync(() => {
+      const held = this.meta("repair");
+      if (held && held !== taskId && this.task(held)?.status === "running") return false;
+      this.setMeta("repair", taskId);
+      return true;
+    });
+  }
+
+  releaseRepair(taskId: string): void {
+    if (this.meta("repair") === taskId) this.sql.exec("DELETE FROM meta WHERE k = 'repair'");
+  }
+
+  /** Removes everything this objective holds. The registry forgets it first. */
+  async destroy(): Promise<void> {
+    await this.ctx.storage.deleteAll();
   }
 
   updateCandidate(id: string, patch: Partial<Pick<Candidate, "status" | "commit" | "checks" | "previewReady" | "note" | "conflict">>, log?: { svc: string; text: string }): Candidate {
@@ -661,6 +766,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       this.sql.exec("UPDATE candidates SET status = 'superseded' WHERE id != ? AND status NOT IN ('accepted', 'superseded')", candidateId);
       for (const id of [candidateId, ...stale]) this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'accepted' WHERE target = ? AND status = 'open'", id);
     });
+    this.retireReplaced(checkpoint.version);
     // Work that can never apply is retired with its reason: approaches the human turned down, and work
     // that creates a file the checkpoint now has from someone else. Questions about it leave the inbox.
     const all = this.contributions();
@@ -710,6 +816,28 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'superseded' WHERE status = 'open' AND kind IN ('accept', 'conflict') AND target IN (SELECT id FROM candidates WHERE status = 'superseded')");
   }
 
+  /**
+   * Work an accepted contribution replaces is superseded whoever wrote it: the checkpoint holds the
+   * replacement, so the original can never apply again. Its dependents are not retired; the planner carries
+   * them onto the replacement. Called at acceptance and by every composer, so a record that lagged (the
+   * replacement shipped inside an outcome before this rule existed) is corrected on the next composition.
+   */
+  retireReplaced(version: number): string[] {
+    const all = this.contributions();
+    const byId = new Map(all.map((x) => [x.id, x]));
+    const done: string[] = [];
+    for (const x of all) {
+      if (x.status !== "accepted" || !x.supersedes) continue;
+      const old = byId.get(x.supersedes);
+      if (!old || ["accepted", "superseded", "blocked"].includes(old.status)) continue;
+      this.sql.exec("UPDATE contributions SET status = 'superseded' WHERE id = ? AND status NOT IN ('accepted', 'superseded', 'blocked')", old.id);
+      this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'replaced' WHERE target = ? AND status = 'open'", old.id);
+      this.emit("Nest", "superseded", `${old.title} by ${this.participant(old.author)?.name ?? old.author} was replaced by ${x.title}, accepted at checkpoint ${version}`, { contribution: old.id, replacement: x.id });
+      done.push(old.id);
+    }
+    return done;
+  }
+
   markCandidatesOutdated(ids: string[]) {
     for (const id of ids) this.sql.exec("UPDATE candidates SET status = 'outdated' WHERE id = ? AND status NOT IN ('accepted', 'superseded')", id);
   }
@@ -750,5 +878,6 @@ function rowToCandidate(r: Row): Candidate {
     policyDigest: String(r.policy_digest), order: JSON.parse(String(r.order_json)), choice: JSON.parse(String(r.choice)), status: String(r.status),
     commit: r.commit_sha ? String(r.commit_sha) : null, checks: JSON.parse(String(r.checks)), previewReady: Number(r.preview_ready) === 1,
     note: r.note ? String(r.note) : null, conflict: r.conflict ? String(r.conflict) : null, createdAt: String(r.created_at),
+    build: Number(r.build ?? 0), branch: r.branch ? String(r.branch) : null,
   };
 }
