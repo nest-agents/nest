@@ -117,14 +117,17 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           await objective.resolveInbox(`accept-${k.id}`, "no longer planned");
         }
         // The head moves for every objective on the project. An outcome built on an older checkpoint, in this
-        // objective or left behind by a sibling's acceptance, cannot be accepted and is marked so.
-        const behind = state.candidates.filter((k) => !planned.has(k.id) && open(k) && k.status !== "outdated" && !dropped.includes(k) && k.baseVersion < plan.head.version);
+        // objective or left behind by a sibling's acceptance, can never be accepted: its work is planned again
+        // on the new head under a new id, and the old card leaves the board.
+        const sameWork = (k: { order: string[] }) => plan.planned.find((c) => c.order.length === k.order.length && c.order.every((id) => k.order.includes(id)));
+        const behind = state.candidates.filter((k) => !planned.has(k.id) && open(k) && !dropped.includes(k) && k.baseVersion < plan.head.version);
         for (const k of behind) {
-          await objective.updateCandidate(k.id, { status: "outdated", note: `Built on checkpoint ${k.baseVersion}; the head is ${plan.head.version}` });
+          const again = sameWork(k);
+          await objective.updateCandidate(k.id, { status: "superseded", note: again ? `Composed again on checkpoint ${plan.head.version} as ${again.id}` : `Built on checkpoint ${k.baseVersion}; the head is ${plan.head.version}` });
           await objective.resolveInbox(`conflict-${k.id}`, "the head moved");
           await objective.resolveInbox(`accept-${k.id}`, "the head moved");
         }
-        return { retired: dropped.map((k) => k.id), outdated: behind.map((k) => k.id), replaced };
+        return { retired: dropped.map((k) => k.id), behind: behind.map((k) => k.id), replaced };
       });
     }
 
