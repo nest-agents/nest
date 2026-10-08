@@ -64,8 +64,13 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
       const [objective, generation, taskId, epochText, sig] = parts as [string, string, string, string, string];
       const expected = await hmac(env.NEST_SIGNING_KEY, `task:${objective}.${generation}.${taskId}.${epochText}`);
       if (!timingSafeEqual(sig, expected)) return null;
-      const current = await objectiveStub(env, objective).generation().catch(() => null);
-      return current === generation ? { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) } : null;
+      // A task token lives exactly as long as its attempt: the same generation, the same epoch, still running.
+      const stub = objectiveStub(env, objective);
+      const current = await stub.generation().catch(() => null);
+      if (current !== generation) return null;
+      const t = await stub.task(taskId).catch(() => null);
+      if (!t || t.status !== "running" || Number(t.epoch) !== Number(epochText)) return null;
+      return { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) };
     }
     return null;
   }

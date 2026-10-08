@@ -8,7 +8,8 @@ when the project has one, and a human accepts it, or agents do where the human h
 Accepted work deploys through the project's own pipeline.
 
 Live at https://nestagents.dev. Built for Cloudflare's "Build the next GitHub" challenge, on Workers and
-Artifacts.
+Artifacts. **Demo video (9:26):** https://github.com/nest-agents/nest/releases/download/v1.0.0/nest-demo.mp4
+(nothing in it is staged; `video/` is the harness that recorded it through the real UI).
 
 ## What changes compared with pull requests
 

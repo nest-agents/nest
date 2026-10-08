@@ -38,6 +38,8 @@ for l in lines[1:]:
         data = re.sub(r'Bearer [A-Za-z0-9._-]{30,}', 'Bearer <token>', data)
         data = re.sub(r'"token":\s*"[^"]{20,}"', '"token": "<token>"', data)
         data = re.sub(r'(ghs_|gho_|github_pat_)[A-Za-z0-9_]{20,}', r'\1<token>', data)
+        data = re.sub(r'\b[a-z][a-z0-9-]*\.[0-9a-f]{8}\.t_[a-z0-9-]+\.\d+\.[0-9a-f]{64}\b', '<task token>', data)
+        data = re.sub(r'\bp\.[a-z][a-z0-9-]*\.\d+\.[0-9a-f]{64}\b', '<participant token>', data)
         if re.match(r'^(hook: |warning: )', data.strip()) or 'rmcp::transport::worker' in data: continue
     out.append(json.dumps([t, kind, data]))
 open(p, "w", encoding="utf-8").write("\n".join(out) + "\n")
