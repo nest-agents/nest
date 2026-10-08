@@ -367,15 +367,14 @@ export class ObjectiveDO extends DurableObject<Env> {
   claimComposer(owner: string, leaseMs = 40 * 60_000): boolean {
     const now = Date.now();
     const held = this.meta("composer");
-    if (held) {
-      const [who, at] = held.split("@");
-      if (who !== owner && now - Number(at) < leaseMs) {
-        this.setMeta("composer:again", "1");
-        return false;
-      }
+    const [who, at] = held ? held.split("@") : [null, "0"];
+    if (held && who !== owner && now - Number(at) < leaseMs) {
+      this.setMeta("composer:again", "1");
+      return false;
     }
     this.setMeta("composer", `${owner}@${now}`);
-    this.sql.exec("DELETE FROM meta WHERE k = 'composer:again'");
+    // A fresh claim starts with a clean slate; a renewal by the holder keeps the work that arrived meanwhile.
+    if (who !== owner) this.sql.exec("DELETE FROM meta WHERE k = 'composer:again'");
     return true;
   }
 
@@ -509,7 +508,9 @@ export class ObjectiveDO extends DurableObject<Env> {
     const c = this.contribution(contributionId);
     if (!c) throw new ObjectiveError("NOT_FOUND");
     const author = this.participant(c.author);
-    const facts: ReviewFact[] = this.reviews(c.id).map((r) => ({ reviewer: r.reviewer, kind: r.kind, family: r.family, verdict: r.verdict, confidence: r.confidence, triage: r.triage }));
+    // A reviewer's family is its lineage as the roster knows it now, so a review written when a model was
+    // misfiled (Plover's gpt-oss counted as its host, not as OpenAI) is weighed by the corrected family.
+    const facts: ReviewFact[] = this.reviews(c.id).map((r) => ({ reviewer: r.reviewer, kind: r.kind, family: this.participant(r.reviewer)?.family ?? r.family, verdict: r.verdict, confidence: r.confidence, triage: r.triage }));
     return route(this.policy(), {
       author: c.author, authorKind: author?.kind ?? "agent", authorFamily: author?.family ?? "unknown",
       paths: c.paths.map((p) => (typeof p === "string" ? p : (p as { path: string }).path)), citedItems: c.cites.map((x) => x.item), specialEntries: c.special,

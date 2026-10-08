@@ -114,7 +114,9 @@ export async function chat(
  * injected verdict quoted in prose would produce, is no verdict at all.
  */
 export function parseJsonReply<T>(text: string, key?: string): T | null {
-  const source = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
+  // Fences are only markers: what is outside them counts as much as what is inside, so an example quoted
+  // next to the real answer still makes two candidates, and no verdict.
+  const source = text.replace(/```[a-z]*\s*/gi, "").replace(/```/g, "");
   const found: T[] = [];
   for (let start = source.indexOf("{"); start >= 0; start = source.indexOf("{", start + 1)) {
     let depth = 0, inString = false, escaped = false;
@@ -129,11 +131,13 @@ export function parseJsonReply<T>(text: string, key?: string): T | null {
       if (ch === '"') inString = true;
       else if (ch === "{") depth++;
       else if (ch === "}" && --depth === 0) {
+        // A balanced top-level block is one candidate whether or not it parses: what is nested inside a
+        // block that is not JSON is not a top-level object either.
         try {
           const obj = JSON.parse(source.slice(start, i + 1)) as T;
           if (obj && typeof obj === "object" && (!key || Object.hasOwn(obj, key))) found.push(obj);
-          start = i; // skip the objects nested inside this one
-        } catch { /* not an object; keep scanning */ }
+        } catch { /* not JSON */ }
+        start = i;
         break;
       }
     }

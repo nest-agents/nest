@@ -483,4 +483,16 @@ describe("what could ship now", () => {
     expect(subs).toHaveLength(1);
     expect(subs[0]!.choice).toEqual({});
   });
+  it("keeps a group's choice while any member of the chosen option is still in the approved part", () => {
+    // The commit that represented the option (the earliest) is the one still waiting; the approved part
+    // is still a choice between the two tasks' designs, so auto-accept must leave it to a human.
+    const g = graph(
+      C("a1", 1, { task: "t_a", alternative: "design", status: "proposed" }),
+      C("a2", 2, { task: "t_a", alternative: "design", status: "approved" }),
+      C("b1", 3, { task: "t_b", alternative: "design", status: "approved" }),
+    );
+    const sub = planFrontier(g, new Set()).find((c) => c.order.join(",") === "a2");
+    expect(sub).toBeDefined();
+    expect(sub!.choice).toEqual({ design: "a2" });
+  });
 });

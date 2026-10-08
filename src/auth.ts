@@ -43,6 +43,10 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
   const cookie = /(?:^|;\s*)nest_owner=([^;]+)/.exec(request.headers.get("cookie") ?? "")?.[1] ?? "";
   let fromCookie = "";
   try { fromCookie = decodeURIComponent(cookie); } catch { /* a malformed cookie is no cookie */ }
+  // A cookie only acts from Nest's own pages. Previews live on sibling hostnames of the same site, so a
+  // page an agent built could otherwise post to owner routes with the owner's cookie; browsers send the
+  // Origin of every cross-origin request, and it has to be this Worker's own.
+  if (fromCookie && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.headers.get("origin") !== new URL(request.url).origin) fromCookie = "";
   const owner = bearer || fromCookie;
   if (owner && env.NEST_OWNER_TOKEN && timingSafeEqual(owner, env.NEST_OWNER_TOKEN)) return { kind: "owner" };
   if (bearer.startsWith("p.")) {

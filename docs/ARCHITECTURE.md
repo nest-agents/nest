@@ -11,7 +11,7 @@ few humans, that breaks in three places.
 | Where it breaks | What Nest does |
 |---|---|
 | **The branch is the unit of decision.** Rejecting a pull request throws away the good pieces inside it. | The unit is the **contribution**: one commit with its dependencies, the context it cites, and, when it is one of several competing designs, its group. **Outcomes are assembled** from contributions across agents and approaches, merged with real git and checked as a whole. |
-| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Two agent reviewers from families other than the author's read every push. A human is asked only when it matters. Agents review humans' work too. |
+| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Agent reviewers from families other than the author's, two by default, read every push. A human is asked only when it matters. Agents review humans' work too. |
 | **Context evaporates.** Each agent starts cold, and why an approach lost is buried in a chat log. | **Context is versioned like code.** Requirements and decisions live in a context repository; contributions cite the versions they relied on; a change shows its **blast radius**. Rejected approaches become notes with the human's reason. |
 
 ## 2. Projects, objectives, participants
@@ -102,10 +102,11 @@ few humans, that breaks in three places.
    - reads the exact changed paths, and which files the commit creates, from Artifacts;
    - registers the contribution, re-checking the fence inside the Durable Object transaction;
    - starts its review.
-5. **Review.** Workers AI triages. Then two reviewers from families other than the author's read the
-   contribution, its task, the other tasks, the requirements and the repository around the change, and return
-   a structured verdict with citations. Routing decides whether a human is needed (section 6). A reviewer that
-   cannot give a verdict never leaves work stuck: a human is asked, and can ask the agents again.
+5. **Review.** Workers AI triages. Then reviewers from families other than the author's (two by default)
+   read the contribution, its task, the other tasks, the requirements and as much of the repository around
+   the change as fits their budget, and return a structured verdict, with citations when they give them.
+   Routing decides whether a human is needed (section 6). A reviewer that cannot give a verdict never leaves
+   work stuck: a human is asked, and can ask the agents again.
 6. **Compose.** One composer runs per objective at a time; requests that arrive meanwhile make it compose
    again when it finishes. It plans the frontier (section 5), then for each outcome:
    1. A fresh runner container clones the checkpoint and cherry-picks the contributions in dependency order.
@@ -119,8 +120,10 @@ few humans, that breaks in three places.
       yet shows its preview check as held; it is composed again once the last approval arrives. Nest opens that URL in Browser Rendering every 30
       seconds until a deployment answers. That visit is the check: the page must load without uncaught
       errors, and its screenshot goes on the outcome card.
-7. **Accept.** The human accepts a ready outcome. The Project Durable Object advances the head by
-   compare-and-swap, and only if every required check passed and every member is approved. Losing
+7. **Accept.** The human accepts a ready outcome. Acceptance verifies that every required check passed and
+   every member is approved, then the Project Durable Object advances the head by compare-and-swap on the
+   version and the context and policy digests (the eligibility check and the swap are not one transaction;
+   see the limitations in SECURITY.md). Losing
    approaches become notes carrying the human's reason. A mirror computer, which never runs candidate code,
    fast-forwards the project's `main`, and Workers Builds deploys it to production.
 
@@ -152,7 +155,8 @@ Inputs: live contributions, their dependencies, groups, and which files each one
   - An outcome that composes but breaks a check, such as two declarations of one name, can be repaired by
     an agent starting from the composed tree.
   - Repairs start automatically only for a true regression: a check that passed for the same selection
-    before, or that the accepted checkpoint passed before a requirement changed. Only one runs at a time.
+    before, or that the accepted checkpoint passed before a requirement changed. One runs at a time, by a
+    check made before the start rather than inside one transaction.
 
 ## 6. Review routing
 
@@ -190,12 +194,17 @@ authored by an agent and approved by that human. A human's review decides over a
 ## 7. Context
 
 - **Items.** Requirements, decisions, evidence, notes and policy are Markdown files with front matter in the
-  project's context repository. Adding one, or accepting a new version, writes a commit there and creates a
-  context-only checkpoint.
-- **Citations.** Contributions cite `item@vN`, and each objective keeps a citation index.
-- **Blast radius.** A new version finds, in every objective of the project, the contributions, outcomes and
-  running tasks that cited the old one. Their outcomes become outdated and are recomposed. If the accepted
-  checkpoint now fails a check it passed when accepted, a repair opens.
+  project's context repository. Adding one, or accepting a new version, creates a context-only checkpoint
+  and then writes a commit there; the Durable Object is the record, and the repository mirrors it.
+  Rejected-approach notes live in the Durable Object only.
+- **Citations.** Contributions cite `item@vN` in their trailers, and each objective keeps a citation index.
+  A citation is the author's claim; Nest records it and checks its version at acceptance, but cannot know
+  what an author read and did not cite.
+- **Blast radius.** A new version finds, in every objective of the project, the contributions and outcomes
+  that cited the old one, and every running task (which may be reading it now). Their outcomes become
+  outdated and are recomposed. If the accepted checkpoint now fails a check it passed when accepted, a
+  repair opens. Reviews are not bound to the version they read: an approval given against v1 still counts
+  after v2.
 - **Rejected approaches.** Accepting an outcome that turns an approach down writes a note with the human's
   reason and the reviews against it. Every later pack carries it.
 - **Search.** `nest search` and `nest_search` are a keyword search over the current items and notes, and

@@ -263,7 +263,11 @@ export function planFrontier(
       const subKey = sub.join("+");
       if (seen.has(subKey)) continue;
       seen.add(subKey);
-      const subChoice = Object.fromEntries(Object.entries(choice).filter(([, id]) => sub.includes(id)));
+      // A group stays a choice while any of its chosen option's members is still in: the member that
+      // represented the option may be the one waiting for a human.
+      const subChoice = Object.fromEntries(Object.entries(choice)
+        .map(([g, id]) => [g, sub.includes(id) ? id : sub.find((x) => nodes.get(x)!.alternative === g)] as [string, string | undefined])
+        .filter((e): e is [string, string] => e[1] !== undefined));
       out.push({ selected: approvedOnly, order: sub, choice: subChoice, ready: true });
     }
   }

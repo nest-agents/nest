@@ -131,7 +131,8 @@ export async function changeContext(env: Env, projectId: string, input: { id: st
   const { checkpoint } = await project.acceptContext(head.version, parsed);
 
   const policyChanged = parsed.id === "policy/review-routing";
-  if (policyChanged) await refreshPolicies(env, projectId);
+  // The context is accepted either way; a refresh that fails leaves every objective on its previous policy.
+  if (policyChanged) await refreshPolicies(env, projectId).catch((e) => console.error(`review policy of ${projectId} not refreshed: ${String(e).slice(0, 200)}`));
   const radii: Record<string, { contributions: number; candidates: number; tasks: number }> = {};
   for (const o of await registryStub(env).objectives(projectId)) {
     const objective = objectiveStub(env, o.id);

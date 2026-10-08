@@ -27,17 +27,19 @@ export async function contributionDiffInfo(env: Env, repo: string, parent: strin
   const parts: string[] = [];
   let total = 0;
   const unreadable: string[] = [];
+  let omitted = false;
   for (const path of paths) {
-    const [before, after] = await Promise.all([
-      artifacts.readText(repo, parent, path).catch(() => null),
-      artifacts.readText(repo, commit, path).catch(() => null),
-    ]);
-    if (before === null && after === null) unreadable.push(path);
-    const d = unifiedDiff(path, before, after);
+    // A missing side is a plain add or delete; a side that could not be read (too large, or a failed read)
+    // is a change the reviewer did not see, and so is a diff too large to compute.
+    const read = async (ref: string) => { try { return { text: await artifacts.readText(repo, ref, path), failed: false }; } catch { return { text: null, failed: true }; } };
+    const [before, after] = await Promise.all([read(parent), read(commit)]);
+    if (before.failed || after.failed || (before.text === null && after.text === null)) unreadable.push(path);
+    const d = unifiedDiff(path, before.text, after.text);
+    if (d.includes("@@ file too large to diff")) omitted = true;
     total += d.length;
     parts.push(total > maxChars ? `--- ${path}: diff omitted, review budget reached\n` : d);
   }
-  return { text: parts.join("\n"), truncated: total > maxChars, unreadable };
+  return { text: parts.join("\n"), truncated: total > maxChars || omitted, unreadable };
 }
 
 function routeFor(env: Env, p: Participant): { provider: "openai" | "openrouter" | "workers-ai"; model: string } {
@@ -66,14 +68,15 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
       const context = await project.context();
       const notes = await project.notes();
       const author = state.participants.find((p) => p.id === c.author);
+      const nonce = boundary();
+      // Rejected-approach notes quote contribution titles and review summaries: data, inside the boundary.
       const contextText = [
         ...context.filter((i) => ["requirement", "decision", "policy"].includes(i.kind)).map((i) => `### ${i.title} [${citeOf(i)}]\n${i.body}`),
-        ...notes.filter((n) => n.kind === "rejected").map((n) => `### Rejected approach: ${n.title} [${n.id}]\n${n.body}`),
+        ...notes.filter((n) => n.kind === "rejected").map((n) => `### Rejected approach: ${n.title} [${n.id}]\n${wrapUntrusted(nonce, `note ${n.id}`, n.body)}`),
       ].join("\n\n");
       const deps = c.requires.map((r) => state.contributions.find((x) => x.id === r)).filter(Boolean).map((d) => `- ${d!.id} ${d!.title}`).join("\n");
       // Reviewers see the repository around the change, not only the diff: the contribution's own tree.
       const { repositorySections } = await import("../packs");
-      const nonce = boundary();
       const repoSections = await repositorySections(this.env, c.repo, c.commit, "Repository after this change", 60_000, nonce);
       const repoText = repoSections.map((s) => `### ${s.title}\n${s.text}`).join("\n\n");
       const task = state.tasks.find((t) => t.id === c.task);
@@ -186,7 +189,9 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
             }
           }
           const verdict = (["approve", "changes", "block"].includes(String(parsed?.verdict)) ? parsed!.verdict : "comment") as Verdict;
-          const findings = (parsed?.findings ?? []).slice(0, 20).map((f) => ({ path: f.path, line: f.line, severity: f.severity, text: String(f.text ?? "").slice(0, 600), cite: f.cite }));
+          // Findings are whatever the model sent: only a list of objects is read, and anything else is no findings.
+          const findings = (Array.isArray(parsed?.findings) ? parsed.findings : []).filter((f) => f && typeof f === "object").slice(0, 20)
+            .map((f) => ({ path: f.path, line: f.line, severity: f.severity, text: String(f.text ?? "").slice(0, 600), cite: f.cite }));
           const cites = findings.map((f) => (f.cite ? parseCitation(f.cite) : null)).filter((c): c is Citation => !!c);
           await objective.addReview({
             // A later round is a new review: an attempt that ended without a verdict must not block its retry.

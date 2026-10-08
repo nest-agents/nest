@@ -73,7 +73,8 @@ export async function buildPack(env: Env, objectiveId: string, taskId: string, b
       mandatory.push({ title: `${kind[0]!.toUpperCase()}${kind.slice(1)}: ${item.title}`, cite: citeOf(item), text: item.body });
   }
   const rejected = notes.filter((n) => n.kind === "rejected");
-  for (const n of rejected) mandatory.push({ title: `Rejected approach: ${n.title}`, cite: n.id, text: n.body });
+  // A rejected-approach note quotes contribution titles and review summaries, so it is data like them.
+  for (const n of rejected) mandatory.push({ title: `Rejected approach: ${n.title}`, cite: n.id, text: wrapUntrusted(nonce, `note ${n.id}`, n.body) });
 
   const optional: PackSection[] = [...extra];
   const others = state.contributions.filter((c) => c.task !== taskId && c.status !== "superseded");

@@ -107,6 +107,8 @@ export class ArtifactsClient {
         const r = right.get(name);
         if (l && r && l.hash === r.hash && l.mode === r.mode) continue;
         const path = prefix + name;
+        // A symlink or submodule on either side is special, including one that replaces a directory.
+        for (const e of [l, r]) if (e && (e.type === "symlink" || e.type === "gitlink")) special = true;
         const isTree = (e?: ArtifactsTreeEntry) => !!e && e.type === "tree";
         if (isTree(l) || isTree(r)) {
           await walk(isTree(l) ? l!.hash : null, isTree(r) ? r!.hash : null, `${path}/`, depth + 1);
@@ -116,7 +118,6 @@ export class ArtifactsClient {
         }
         const entry = (r ?? l)!;
         const mode = entry.mode;
-        if (entry.type === "symlink" || entry.type === "gitlink") special = true;
         paths.push({ path, mode, change: !l ? "add" : !r ? "delete" : "modify" });
         if (paths.length > 2000) throw new Error("too many changed paths");
       }

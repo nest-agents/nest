@@ -124,8 +124,9 @@ export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact
 
   if (!others.some((r) => r.triage)) return { state: "needs-triage" };
 
-  // Independence: a reviewer from the author's own model family does not count.
-  const required = policy.agentReviewers;
+  // Independence: a reviewer from the author's own model family does not count. When agents decide alone,
+  // one family is never enough, whatever the policy says.
+  const required = policy.decider === "agents" ? Math.max(2, policy.agentReviewers) : policy.agentReviewers;
   const agents = others.filter((r) => r.kind === "agent" && !r.triage && r.verdict !== "comment" && r.family !== subject.authorFamily);
   const families = new Set(agents.map((r) => r.family));
   if (families.size < required) {

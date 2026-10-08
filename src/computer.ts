@@ -420,6 +420,8 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     // (OpenRouter), priority tiers, several completions, and paid hosted tools. The forwarded body is this
     // re-serialized object, so what was checked is exactly what is sent.
     for (const k of ["models", "route", "provider", "plugins", "transforms", "service_tier", "background", "web_search_options"]) delete parsed[k];
+    // Server-side context is billed as input this body does not show: a reservation must see everything it pays for.
+    for (const k of ["previous_response_id", "conversation", "prompt_cache_key", "store"]) delete parsed[k];
     if (parsed.n !== undefined) parsed.n = 1;
     if (Array.isArray(parsed.tools)) {
       const PAID = /^(web_search|web_search_preview|file_search|code_interpreter|image_generation|computer_use|computer_use_preview|mcp)/;
@@ -435,8 +437,9 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     headers.delete("authorization");
     headers.delete("x-api-key");
     if (key) headers.set("authorization", `Bearer ${key}`);
+    // Gateway controls (logging, custom cost, cache, retries) are Nest's to set, never the agent's.
+    for (const k of [...headers.keys()]) if (k.startsWith("cf-aig-")) headers.delete(k);
     headers.set("cf-aig-metadata", JSON.stringify({ objective: props.objective, task: props.task ?? "-", computer: props.computer }));
-    headers.delete("cf-aig-authorization");
     for (const [k, v] of Object.entries(gatewayHeaders(this.env))) headers.set(k, v);
     headers.delete("host");
     headers.set("content-type", "application/json");
