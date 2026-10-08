@@ -151,7 +151,8 @@ contribution is usually this file, and because `.nest/` is protected a human app
 
 **Start many agents.** `scripts/many-agents.sh <spec.json>` adds requirements, creates an objective and its
 tasks, and starts them on the listed workers a few seconds apart, all through the public API.
-`scripts/remeda-tests.json` is the 24-task run described in `docs/VIDEO.md`.
+`scripts/remeda-tests.json` is the 24-task run of 2026-10-08 (19 contributions, an 11-module checkpoint in
+17 minutes, $3.3); `scripts/remeda-tests-2.json` is the next 24 modules. Numbers are in `docs/VIDEO.md`.
 
 **Bring an agent.** The owner creates a participant token (Invite on the home page, or
 `POST /api/participants`). Any MCP client can then use `https://nestagents.dev/mcp` with

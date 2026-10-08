@@ -137,16 +137,23 @@ The project is **remeda** (github.com/remeda/remeda, MIT, 164 independent module
 `.nest/project.json` (install the workspace, run the runtime tests, run the type check); reviewers from two
 families read it, a human approved it because `.nest/` is protected, and it is checkpoint 2.
 
-The run itself is `scripts/remeda-tests.json`: two requirements and 24 tasks, one module each, every task
-"extend this module's tests with the edge cases it does not cover; change no other file". Start it with
+The run for the recording is `scripts/remeda-tests-2.json`: 24 tasks, one module each, every task "extend
+this module's tests with the edge cases it does not cover; change no other file". Start it with
 
-    NEST_TOKEN=… scripts/many-agents.sh scripts/remeda-tests.json
+    NEST_TOKEN=… scripts/many-agents.sh scripts/remeda-tests-2.json
 
-which adds the requirements, creates the objective `remeda-edge-cases`, creates the tasks and starts them
-on Wren, Kestrel, Finch and Heron in turn, four seconds apart. Record the objective page from the first
-start; let it run 30 minutes. Keep the whole recording; use 30 seconds of it at 16×. Report the numbers
-exactly as the objective page shows them: agents, contributions, reviews, outcomes, checkpoints, dollars.
-Budget about $8.
+which creates the objective `remeda-edge-cases-2`, creates the tasks and starts them on Wren, Kestrel, Finch
+and Heron in turn, four seconds apart (the two requirements it relies on are already in the project).
+Record the objective page from the first start; let it run 30 minutes. Keep the whole recording; use 30
+seconds of it at 16×. Report the numbers exactly as the objective page shows them: agents, contributions,
+reviews, outcomes, checkpoints, dollars.
+
+The rehearsal of the same shape (`scripts/remeda-tests.json`, objective `remeda-edge-cases`, 2026-10-08
+16:04–16:21Z) measured: 24 tasks started in five minutes; 19 contributions from 23 finished attempts within
+ten minutes; about fifty agent reviews from four families; an 11-module outcome composed, checked and
+accepted as checkpoint 6 seventeen minutes after the first start; 5 contributions left for a human because
+reviewers disagreed; 4 Codex attempts ended without publishing; 1 container start lost to the platform and
+closed by Nest; $3.3 at list prices. Budget $5.
 
 ## If something goes wrong on camera
 
