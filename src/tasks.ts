@@ -237,6 +237,7 @@ export async function reapAttempts(env: Env, objectiveId: string): Promise<strin
     if (who && !["codex", "nest-agent"].includes(who.harness)) {
       if (state.contributions.some((c) => c.task === t.id && c.epoch === t.epoch && c.status === "accepted")) {
         await objective.finishAttempt(t.id, t.epoch, "done", "its work was accepted");
+        if (t.repo) await closeFork(env, objectiveId, t.repo, t.id, t.epoch);
         reaped.push(t.id);
       }
       continue;
@@ -246,6 +247,7 @@ export async function reapAttempts(env: Env, objectiveId: string): Promise<strin
     if (!s || !["errored", "terminated", "complete"].includes(s.status)) continue;
     const why = s.status === "errored" ? `Nest could not run this attempt: ${String(s.error?.message ?? s.error ?? "unknown error").slice(0, 200)}` : `its workflow ended (${s.status}) without finishing it`;
     await objective.finishAttempt(t.id, t.epoch, "failed", why);
+    if (t.repo) await closeFork(env, objectiveId, t.repo, t.id, t.epoch);
     reaped.push(t.id);
   }
   return reaped;
