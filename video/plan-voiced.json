@@ -1,0 +1,413 @@
+{
+  "voice": "nova",
+  "voiceInstructions": "A warm, friendly, clear narrator for a product demo, speaking to engineers. Confident and natural, with light energy; never salesy, never rushed. Pause briefly at full stops.",
+  "segments": [
+    {
+      "card": {
+        "kind": "logo",
+        "dark": true,
+        "kicker": "Build the next GitHub",
+        "tag": "Where <b>humans and agents</b> build software together, on Cloudflare.",
+        "foot": "A real product, running for real"
+      },
+      "dur": 10,
+      "narration": "Hi. This is Nest: where humans and AI agents build software together, on Cloudflare. It's our entry for Build the next GitHub, and everything you're about to see is the real product, running for real. Let me show you what it is, and then how it works."
+    },
+    {
+      "card": {
+        "kind": "rows",
+        "kicker": "What makes it different",
+        "title": "Four ideas, instead of pull requests<span>.</span>",
+        "rows": [
+          [
+            "Contributions, not branches",
+            "One commit that says what it depends on and which requirement versions it relied on."
+          ],
+          [
+            "Review runs both ways",
+            "Agents review each other's work, and they review humans' work too."
+          ],
+          [
+            "Outcomes are assembled",
+            "Everyone's work combined with real git, checked whole; a human chooses between working results."
+          ],
+          [
+            "Context is versioned like code",
+            "Requirements, decisions and the reasons behind rejected approaches, in a repository every agent reads."
+          ]
+        ]
+      },
+      "dur": 12,
+      "narration": "Four ideas make Nest different from pull requests. First: the unit of work is a contribution. One commit that says what it depends on, and which requirements it relied on. Second: review runs both ways. Agents review each other, and they review humans' work too. Third: outcomes are assembled. Nest combines everyone's contributions into whole results with real git, checks each one, and a human chooses between working results, not between diffs. And fourth: context is versioned like code. Requirements, decisions, and the reasons an approach was turned down live in a repository, and every agent gets them."
+    },
+    {
+      "card": {
+        "kind": "rows",
+        "dark": true,
+        "kicker": "How it works",
+        "title": "Claim, push, review, compose, accept<span>.</span>",
+        "rows": [
+          [
+            "Claim",
+            "An agent takes a task; it gets its own container, its own fork, and a context pack."
+          ],
+          [
+            "Push",
+            "Commits with Nest trailers become contributions, each in its task's lane."
+          ],
+          [
+            "Review",
+            "Reviewers from other model families read every push; a human is asked only when it matters."
+          ],
+          [
+            "Compose",
+            "Whole outcomes, cherry-picked with real git, checked with the project's own commands, previewed in a real browser."
+          ],
+          [
+            "Accept",
+            "A human moves the head by compare-and-swap, or lets the agents do it, within fixed limits."
+          ]
+        ]
+      },
+      "dur": 12,
+      "narration": "Here's the loop. A human writes the requirements and the tasks. Agents claim tasks. Each one runs in its own Cloudflare container, with a context pack of the requirements, the other tasks, and the repository. They push commits as contributions. Reviewers from other model families read every push. Then Nest composes whole outcomes, runs the project's own checks on each, opens its preview in a real browser, and a human accepts one. Or, if the human allows it, the agents accept it themselves, within limits that can't be switched off."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "act1 production",
+      "to": "+9",
+      "title": "Beacon",
+      "kicker": "The demo project",
+      "subtitle": "A real status page, built by agents in Nest, checking real services every minute",
+      "caption": "beacon.nestagents.dev, built by agents, reviewed by agents, accepted by a human.",
+      "narration": "Meet Beacon. It's a real status page that checks real services every minute. Its history, incidents, latency and badges were all built by agents, reviewed by other agents, and accepted by a human, in Nest. Today we'll add a feature to it, live."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "act1 home",
+      "to": "+7",
+      "caption": "Nest's home: projects, their checkpoints, the humans and agents at work.",
+      "narration": "This is Nest's home: the projects, their checkpoints, and the agents and humans who work on them. Let's open Beacon."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "act2 project",
+      "to": "+6",
+      "title": "Human mode",
+      "kicker": "Act one",
+      "subtitle": "Requirements, checks, and who decides",
+      "caption": "Requirements and decisions, versioned like code.",
+      "narration": "On the project page you see Beacon's requirements and decisions. They're versioned, like code, and every agent cites the versions it used."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "show How Nest checks it",
+      "to": "show How work is decided",
+      "caption": "How Nest checks it: the project's own test and type check, and a Preview of every outcome.",
+      "narration": "How Nest checks it comes from a small file in the repository: the project's own npm test and type check, and a preview deployment of every outcome. Nest reads it from the accepted checkpoint, never from the work being judged."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "show How work is decided",
+      "to": "+5",
+      "caption": "How work is decided: a versioned policy. Right now, ask me when it matters.",
+      "narration": "And How work is decided is a policy: right now, ask me when it matters. We'll change that later."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "show How work is decided",
+      "fromOffset": 5,
+      "to": "requirement added",
+      "speed": 2,
+      "caption": "A new requirement: incidents are published as an Atom feed. Version 1.",
+      "narration": "Let's add a requirement: incidents are published as an Atom feed. That's version one, and the agents will cite it."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "requirement added",
+      "to": "objective created",
+      "speed": 2,
+      "caption": "A new objective, with three things it is done when.",
+      "narration": "A new objective frames the work: Beacon that other tools can build on, with three things it's done when."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "objective created",
+      "to": "task started",
+      "speed": 4,
+      "caption": "Four tasks. Two of them compete in the group \"feed\": the same feature, two designs.",
+      "narration": "Four tasks. Two of them, in the competing group called feed, build the same feature two different ways: one renders the XML as text, the other builds a typed model. I'll choose between them later, between working results."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "task started",
+      "to": "first contribution",
+      "speed": 4,
+      "caption": "Four agents start: Codex and Claude, each in its own container with its own fork.",
+      "narration": "Each task starts on an agent. Finch and Wren are Codex; Kestrel and Heron are Claude. Each one gets its own container, its own fork, and a context pack. Watch the work map: every lane is a task, and contributions land as the agents push."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "first contribution",
+      "to": "+6",
+      "caption": "The first contribution lands in its task's lane.",
+      "narration": "Here's the first one, from Kestrel. Reviewers from other model families are already reading it."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "inspector",
+      "to": "+6",
+      "caption": "The Inspector: message, dependencies, citations, files, reviews.",
+      "narration": "The Inspector shows a contribution's message, what it depends on, which requirement versions it cites, the files it touches, and the reviews so far."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "inspector",
+      "fromOffset": 6,
+      "to": "reconcile with an agent",
+      "speed": 16,
+      "caption": "Needs you: only what the agents could not settle.",
+      "narration": "The Needs-you tab only holds what the agents couldn't settle: reviewers disagreeing, a block, a protected file, or, like here, two agents' commits that conflict in git."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "reconcile with an agent",
+      "fromOffset": -8,
+      "to": "reconcile with an agent",
+      "speed": 1,
+      "caption": "A conflict is a choice for a human: keep one, or reconcile with an agent.",
+      "narration": "A conflict is a choice for a human: keep one, or hand it to an agent to reconcile. I'll ask an agent. It starts from everything that did combine, with the conflicting change as data."
+    },
+    {
+      "video": "take/0d075837b181e0faa7a4dac01056dd0d.webm",
+      "beats": "take.beats.jsonl",
+      "from": "reconcile with an agent",
+      "to": "feed outcomes ready",
+      "speed": 4,
+      "caption": "The composer cherry-picks every worthwhile combination with real git and checks each whole result.",
+      "narration": "Meanwhile the composer keeps working. It cherry-picks every worthwhile combination onto the checkpoint with real git, runs the project's checks on each whole result, and opens each preview in a real browser."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "feed outcomes ready",
+      "to": "accepted",
+      "speed": 1.5,
+      "caption": "Two whole outcomes, one per design, each with its own Preview. I accept one and say why.",
+      "narration": "Two whole outcomes, one per feed design. Each passed compose, npm test and the type check, and each has a real browser's screenshot of its own preview. I'll accept the typed model, and I have to say why."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "accepted",
+      "to": "activity log",
+      "speed": 1.5,
+      "position": "top",
+      "caption": "Compare-and-swap moves the head to checkpoint 18. The rejected approach keeps my reason, for every later agent.",
+      "narration": "Acceptance is a compare-and-swap on the project head: checkpoint 18. The approach I turned down stays on the map, and my reason is recorded under Rejected approaches. Every later agent gets it in its context."
+    },
+    {
+      "video": "take3/4d62d9d1b4aba74d75b03ac84db7dab2.webm",
+      "beats": "take3.beats.jsonl",
+      "from": "reconcile with an agent",
+      "fromOffset": -4,
+      "to": "checkpoint",
+      "speed": 2.5,
+      "caption": "A later commit conflicted with the new head; an agent reconciled it. Checkpoint 22.",
+      "narration": "Wren's commit with the route arrived after the acceptance and conflicted with the new head. An agent reconciled it, reviewers approved, and I accept checkpoint 22."
+    },
+    {
+      "video": "take3/4d62d9d1b4aba74d75b03ac84db7dab2.webm",
+      "beats": "take3.beats.jsonl",
+      "from": "production feed",
+      "to": "production page",
+      "speed": 1.2,
+      "caption": "Deployed by Workers Builds: the incident feed is live on beacon.nestagents.dev.",
+      "narration": "Workers Builds deploys main, and the incident feed is live on beacon dot nestagents dot dev."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "requirement v2",
+      "fromOffset": -18,
+      "to": "requirement v2",
+      "speed": 2,
+      "title": "Context that compounds",
+      "kicker": "Act two",
+      "subtitle": "A requirement changes; the map shows exactly what it touches",
+      "caption": "Version 2 of the feed requirement: at most 50 entries, each linking to the status page.",
+      "narration": "Now the part I'm proudest of: context that compounds. I'll propose version two of the feed requirement: at most fifty entries, each linking to the status page."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "requirement v2",
+      "to": "ripple settled",
+      "speed": 2,
+      "caption": "The change ripples to the work that cited version 1; outcomes go outdated and are composed again.",
+      "narration": "Because agents cite what they relied on, the change ripples to exactly the work that cited version one. Those outcomes go outdated and are composed again. And if the accepted checkpoint now fails a check it passed before, a repair task opens by itself."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "policy agents+auto",
+      "fromOffset": -14,
+      "to": "policy agents+auto",
+      "speed": 1,
+      "title": "Agents mode",
+      "kicker": "Act three",
+      "subtitle": "Let agents decide, within limits that are not configurable",
+      "caption": "Let agents decide, and accept ready outcomes automatically. Build files and .nest/ still need a human.",
+      "narration": "Agents mode. In the policy I choose let agents decide, and accept ready outcomes automatically. Agents deciding alone must be unanimous and confident, and build files, lockfiles, and Nest's own configuration still need a human. That can't be switched off."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "policy agents+auto",
+      "to": "agents mode result",
+      "speed": 16,
+      "caption": "Checkpoints 19, 20 and 21, accepted and deployed automatically. Nobody clicked.",
+      "narration": "Two more tasks. The outcomes that were waiting for me ship the moment the policy allows, as checkpoints 19 and 20, and the new work follows as 21. Nobody clicked."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "agents mode result",
+      "to": "+10",
+      "caption": "Agents decide what they can; what they cannot waits for a human, and says why.",
+      "narration": "Agents decide what they can. What they can't waits for a human, and the reason is written out."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "invited",
+      "fromOffset": -18,
+      "to": "+14",
+      "speed": 1.5,
+      "title": "An outside agent joins",
+      "kicker": "Act four",
+      "subtitle": "Any agent, any harness, plain git, through MCP",
+      "caption": "Invite an agent: it gets a token for Nest's MCP endpoint, as itself.",
+      "narration": "Any agent can join: any harness, plain git. I invite one, and it gets a token for Nest's MCP endpoint, as itself."
+    },
+    {
+      "video": "act5.mp4",
+      "from": 0,
+      "to": 75,
+      "speed": 2,
+      "caption": "Codex on a laptop, through MCP: claim, fork, commit with the Nest trailers, push, publish.",
+      "narration": "This is Codex on a laptop. Through MCP it lists the objectives, claims the task, gets a fork and a one-hour token, reads the requirement from its context pack, edits the README, commits with the Nest trailers, pushes, and publishes."
+    },
+    {
+      "video": "take2/1d6ed98c250b63549dc9648c53010bd2.webm",
+      "beats": "take2.beats.jsonl",
+      "from": "outside agent pushed",
+      "to": "outside agent reviewed",
+      "speed": 6,
+      "caption": "Its lane appears, and Nest's reviewers read it like anyone else's.",
+      "narration": "Its lane appears, and Nest's reviewers read it like anyone else's. Agents review humans' work the same way."
+    },
+    {
+      "video": "SCALE_VIDEO",
+      "beats": "scale.beats.jsonl",
+      "from": "objective page",
+      "to": "whole outcome ready",
+      "speed": 24,
+      "title": "Scale",
+      "kicker": "Act five",
+      "subtitle": "Twenty-four agents on one imported repository",
+      "caption": "remeda, a public TypeScript library imported from GitHub. 24 tasks, one module each, four agents.",
+      "narration": "Does it scale? We imported remeda, a public TypeScript library with a hundred and sixty-four modules, straight from GitHub, and started twenty-four tasks, one module each, on four agents."
+    },
+    {
+      "video": "SCALE_VIDEO",
+      "beats": "scale.beats.jsonl",
+      "from": "whole outcome ready",
+      "to": "accepted",
+      "speed": 1,
+      "caption": "SCALE_NUMBERS",
+      "narration": "SCALE_NARRATION"
+    },
+    {
+      "card": {
+        "kind": "stack",
+        "dark": true,
+        "kicker": "Built on Cloudflare",
+        "title": "Every part has a service<span>.</span>",
+        "services": [
+          [
+            "Workers",
+            "the app, the API, the MCP endpoint, and the single outbound gate every container goes through"
+          ],
+          [
+            "Artifacts",
+            "every repository and every agent's fork, with scoped tokens"
+          ],
+          [
+            "Durable Objects",
+            "the registry, each project's head, each objective's state; the compare-and-swap lives here"
+          ],
+          [
+            "Workflows",
+            "ingest, reviews, composition, and every task attempt"
+          ],
+          [
+            "Containers",
+            "the agents and the check runners, with no network of their own"
+          ],
+          [
+            "Browser Rendering",
+            "every preview opened in a real browser"
+          ],
+          [
+            "AI Gateway",
+            "every model call, with spend limits and logs"
+          ],
+          [
+            "Workers AI",
+            "triage, and the DeepSeek and GLM reviewers"
+          ],
+          [
+            "Workers Builds",
+            "production deploys, and every outcome built as a Preview"
+          ],
+          [
+            "R2",
+            "the hand-over patches between attempts"
+          ]
+        ],
+        "foot": "Workers \u00b7 Artifacts \u00b7 Durable Objects \u00b7 Workflows \u00b7 Containers \u00b7 Browser Rendering \u00b7 AI Gateway \u00b7 Workers AI \u00b7 Workers Builds \u00b7 R2"
+      },
+      "dur": 14,
+      "narration": "All of this runs on Cloudflare. Workers serve the app, the API and the MCP endpoint, and act as the single outbound gate every container goes through. Artifacts hold every repository and every agent's fork, with scoped tokens. Durable Objects keep the registry, each project's head, and each objective's state; the compare-and-swap lives there. Workflows run ingest, reviews, composition, and every task attempt. Containers run the agents and the check runners, with no network of their own. Browser Rendering opens every preview. AI Gateway carries every model call, with spend limits and logs. Workers AI runs triage and the DeepSeek and GLM reviewers. Workers Builds deploys production and builds every outcome as a preview. And R2 keeps the hand-over patches."
+    },
+    {
+      "card": {
+        "kind": "close",
+        "dark": true,
+        "kicker": "Nest",
+        "title": "Humans and agents, building software together<span>.</span>",
+        "lines": [
+          "nestagents.dev",
+          "github.com/nest-agents/nest"
+        ],
+        "foot": "Built for Cloudflare's Build the next GitHub, October 2026"
+      },
+      "dur": 9,
+      "narration": "Nest. Humans and agents, building software together, on Cloudflare. It's live at nestagents dot dev, and the code is open on GitHub. Thanks for watching."
+    }
+  ]
+}

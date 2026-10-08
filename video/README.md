@@ -18,3 +18,11 @@ from those beats.
 
 Run with `VIDEO_DIR` set to a working directory, `playwright` installed (`npm i playwright`, Chrome present),
 `asciinema`, `agg` and `ffmpeg` on the path, and the owner token at `~/.secrets/nest_owner_token`.
+
+## The narrated cut
+
+`plan-voiced.json` is the script: a lead-in of cards (`cards.mjs`: the wordmark, the four ideas, how it
+works), every act with a short on-screen caption and a narration line, the Cloudflare stack named service by
+service, and a close. `cut2.mjs` speaks each narration line with OpenAI text-to-speech (`gpt-4o-mini-tts`,
+voice `nova`), holds a segment at least as long as its line, and muxes the audio; `finalize2.mjs` fills in
+the scale act's numbers from the scale reel's own beats and renders `nest-demo-voiced.mp4` (9:26).
