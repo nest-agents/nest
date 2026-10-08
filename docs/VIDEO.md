@@ -60,8 +60,9 @@ Then create these tasks (New task), and start each on the agent shown:
      I'll choose later, between working results."
 4. **2:15 – 3:30. Four agents at once.**
    - Start the four tasks and stay on the work map.
-   - Contributions arrive in each lane as agents push, with review ticks under each node as two other model
-     families review them: Owl (Claude), Shrike (OpenAI), Plover (Workers AI).
+   - Contributions arrive in each lane as agents push, with review ticks under each node as two reviewers from
+     other model families read them: Owl (Claude), Shrike (OpenAI), Kite (DeepSeek), and Tern (GLM) when
+     they need a fourth opinion.
    - Open one contribution in the Inspector: its message, what it cites, its files, its reviews.
 5. **3:30 – 4:30. Only what needs a human reaches a human.**
    - Open Needs you, where whatever came up waits: typically a protected file (`package.json`), a low-confidence

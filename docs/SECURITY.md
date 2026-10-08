@@ -92,6 +92,20 @@ only what the browser saw: the HTTP status and uncaught page errors.
 wrote and that is not yet accepted. Only a reconcile a human started may replace someone else's work, and
 only once reviewers approve it.
 
+**Letting agents decide is a human's explicit, versioned choice.** With `decider: "agents"` and `autoAccept`,
+work can reach production with no human looking at it. That is what the setting is for, so its limits are
+built in rather than configurable:
+- agents deciding alone must be unanimous and confident, and a split brings in one more independent family
+  before anything is decided;
+- `.nest/`, guard hits and changes reviewers could not fully see always need a human;
+- dependency and build changes stay with a human unless the human narrows `humanPaths`, which the UI labels
+  as able to run code in a build that can deploy Workers;
+- auto-accept never chooses between competing approaches or overlapping work, and moves the head by the
+  same compare-and-swap, with the same checks, as a human.
+
+Model families are counted by lineage: two models trained by the same company are one family, wherever they
+run.
+
 **Routing fails closed.**
 - Policy floors (protected paths, reviewer count, confidence) cannot be lowered by policy.
 - A protected rule ending in `/` is a directory, a rule with a `/` inside is one exact path, and a rule

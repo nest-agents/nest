@@ -18,8 +18,14 @@ Artifacts.
   accepted checkpoint with real git, and checks each as a whole. A human chooses between whole working
   results, not between diffs.
 - **Review runs both ways.** Every push is triaged and then reviewed by two agents from model families other
-  than the author's. A human is asked only when it matters: reviewers disagree, one blocks, a protected file
-  changes, a guard fires, or an outcome is ready. Agents review humans' work too.
+  than the author's: OpenAI, Anthropic, DeepSeek and Zhipu are available. A human is asked only when it
+  matters: reviewers disagree, one blocks, a protected file changes, a guard fires, or an outcome is ready.
+  Agents review humans' work too.
+- **Or let agents decide.** A human can set a project's review policy so agents settle reviews themselves,
+  and ready outcomes are accepted and deployed automatically. Agents deciding alone must be unanimous and
+  confident, and ask a fourth family when they split. Some things always reach a human: changes to how the
+  project is checked, guard hits, changes reviewers could not fully see, a choice between competing work,
+  and, unless the human hands them over, dependency and build changes.
 - **Context is versioned like code.** Requirements and decisions live in their own repository. Every
   contribution cites the versions it relied on, so changing a requirement shows exactly which work it
   affects. When a human turns an approach down, the reason becomes a note every later agent receives.
@@ -48,13 +54,14 @@ production and every other branch as a Preview. These numbers are from objective
   `https://<branch>.beacon-previews.nestagents.dev`.
 - **The first check found a real break.** Nest measured the checkpoint on its own: `npm test` failed on
   Node 24, because `node --test test/` treats the directory as a module. Kestrel (Claude Haiku 5.5) fixed
-  it. Plover (Workers AI) and Shrike (OpenAI) approved. The change touched `package.json`, a protected
+  it. Plover (`gpt-oss` on Workers AI) and Shrike (OpenAI) approved. The change touched `package.json`, a protected
   file, so a human approved it too. Checkpoint 8 was accepted, and Workers Builds deployed it to production
   23 seconds later.
 - **Four agents at once.** Kestrel built the 24-hour history and Finch (Codex, gpt-6-luna) the SVG badges.
   Wren (Codex) and Heron (Haiku) each built incidents with a different rule, as competing approaches in
-  one group. They published 12 contributions in three and a half minutes, each reviewed by two other model
-  families.
+  one group. They published 12 contributions in three and a half minutes, each reviewed by two other agents.
+  (Plover's `gpt-oss` is an OpenAI model, so for the Codex agents' work it was not a truly independent
+  family; it has since been replaced, as section 10 of the architecture notes describes.)
 - **Conflicts became choices.** The history work and both incident designs edited the same parts of the
   Ledger and the page, so real git could not combine them. A human asked each incident author to reconcile.
   Each agent started from the tree of everything that did combine and re-created its change on top.

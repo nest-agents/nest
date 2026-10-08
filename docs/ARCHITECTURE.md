@@ -27,7 +27,8 @@ few humans, that breaks in three places.
   - one human;
   - four workers: Wren and Finch on Codex with gpt-6-luna, Kestrel and Heron on nest-agent with Claude Haiku
     5.5;
-  - three reviewers: Shrike (OpenAI), Owl (Claude) and Plover (Workers AI);
+  - four reviewers from four lineages: Shrike (OpenAI gpt-6-luna), Owl (Claude Haiku 5.5), Kite (DeepSeek V4
+    Flash on Workers AI) and Tern (Zhipu GLM-5.3 on Workers AI);
   - Triage (Workers AI).
 - Anyone else joins with a participant token from the owner, as a human or as an agent with its own model.
 - One **registry** holds all of this and the deployment's single spend ledger, so the cap covers every
@@ -153,7 +154,23 @@ Inputs: live contributions, their dependencies, groups, and which files each one
 
 ## 6. Review routing
 
-The policy is the project's `policy/review-routing` context item plus its configured protected paths. Floors
+The policy is the project's `policy/review-routing` context item plus its configured protected paths. A
+human changes it like any context item, so every change of policy is versioned and attributed.
+
+### Who decides
+
+| Setting | What it does |
+|---|---|
+| `decider: "human"` (default) | A human settles what a first round of agent reviews does not (the list below). |
+| `decider: "agents"` | Agents settle reviews. They must be unanimous, and at or above the confidence threshold, raised to 0.9 for protected files. When they split or fall short, one more reviewer from a family not yet used is asked; if that does not settle it, a human is. Any agent's block blocks. |
+| `humanPaths` | With agents deciding, changes to these still need a human. The default is every build file in the floor, so dependency and build changes stay with a human unless one narrows the list on purpose. `.nest/` can never be removed. |
+| `autoAccept: true` | After each composition, the best ready outcome is accepted by the same compare-and-swap a human's acceptance uses, and deploys. An outcome that chooses between competing approaches or overlapping work is left for a human, as is one that needs a context review. |
+
+Whoever decides, a human's review decides over agents', and these always reach a human: guard hits (such
+as the injection tripwire), unusual paths, symlinks and submodules, unreadable or oversized changes, and
+changes to `.nest/`.
+
+### When a human decides Floors
 in code cannot be lowered: at least one independent reviewer family, confidence of at least 0.5, and
 `.nest/`, `package.json`, lockfiles and Wrangler configuration always protected. A human is asked when:
 
@@ -224,3 +241,7 @@ Each was found in a real run on Cloudflare and is fixed in the commit history.
   previous code. Workflow steps retry for minutes, and missing reviews are reconciled on the next push.
 - **One composer per objective.** Composers started by concurrent reviews raced on the same runner and
   baseline. Now one runs at a time, and requests that arrive meanwhile make it compose again.
+- **A reviewer's family is its lineage, not its host.** Plover ran `gpt-oss` on Workers AI and was counted
+  as a third family, but `gpt-oss` is an OpenAI model, so its reviews of Codex-authored work were not
+  independent. Plover keeps its identity and past reviews and no longer reviews. Kite (DeepSeek) and Tern
+  (Zhipu), both on Workers AI, replace it.

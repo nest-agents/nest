@@ -52,3 +52,22 @@ describe("project config", () => {
     expect(requiredChecks(EMPTY_CONFIG)).toEqual(["compose"]);
   });
 });
+
+import { parseContextFile } from "../src/context";
+import { effectivePolicy } from "../src/domain/review";
+
+describe("the review policy a human writes", () => {
+  const text = (block: object) => `---\nid: policy/review-routing\nkind: policy\nversion: 2\nowner: human\ntitle: How work is reviewed and accepted\n---\nAgents decide reviews.\n\n\`\`\`nest-policy\n${JSON.stringify(block, null, 2)}\n\`\`\`\n`;
+  it("parses who decides, what stays human, and auto-accept", () => {
+    const item = parseContextFile("policy/review-routing.md", text({ decider: "agents", autoAccept: true, humanPaths: [".nest/"] }), "c".repeat(40));
+    expect(item?.policy).toEqual({ decider: "agents", autoAccept: true, humanPaths: [".nest/"] });
+    const p = effectivePolicy(item!.policy);
+    expect(p.decider).toBe("agents");
+    expect(p.autoAccept).toBe(true);
+    expect(p.humanPaths).toEqual([".nest/"]);
+  });
+  it("ignores values it does not understand instead of guessing", () => {
+    const item = parseContextFile("policy/review-routing.md", text({ decider: "anyone", autoAccept: "yes" }), "c".repeat(40));
+    expect(effectivePolicy(item!.policy)).toMatchObject({ decider: "human", autoAccept: false });
+  });
+});
