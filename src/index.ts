@@ -380,6 +380,14 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     return json(await reconcileConflict(env, objectiveId, reconcile[1]!, b.participant ?? env.AUTO_REPAIR_AGENT));
   }
 
+  const repair = /^\/candidates\/(k[0-9a-f]{10})\/repair$/.exec(rest);
+  if (repair && request.method === "POST") {
+    require(p, "owner");
+    const b = await body<{ participant?: string }>(request);
+    const { repairOutcome } = await import("./tasks");
+    return json(await repairOutcome(env, objectiveId, repair[1]!, b.participant ?? env.AUTO_REPAIR_AGENT));
+  }
+
   const accept = /^\/candidates\/(k[0-9a-f]{10})\/accept$/.exec(rest);
   if (accept && request.method === "POST") {
     require(p, "owner");

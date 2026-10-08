@@ -492,7 +492,7 @@ function outcomeCard(c) {
     ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
-    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${previewLink(c)}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`;
+    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${previewLink(c)}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${owner() && ["failing", "incomplete"].includes(c.status) && c.commit && !/^Being repaired/.test(c.note ?? "") ? `<button class="btn small" data-repair="${esc(c.id)}" type="button">Repair with an agent</button>` : ""}${owner() && c.status === "conflict" ? `<button class="btn small" data-reconcile="${esc(c.id)}" type="button">Reconcile with an agent</button>` : ""}</div></div>`;
 }
 
 function inspectHtml() {
@@ -818,6 +818,18 @@ document.addEventListener("click", (e) => {
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";
     return act(() => api(`${BASE}/reviews`, { method: "POST", body: JSON.stringify({ target: t.dataset.review, verdict: t.dataset.verdict, summary }) }), "Review recorded");
+  }
+  if (t.dataset.repair) {
+    const workers = S.participants.filter((p) => p.kind === "agent" && ["codex", "nest-agent"].includes(p.harness));
+    return modal(`<form class="form" id="rp"><h3>Repair this outcome</h3><p>Git combined this work, but the result fails a check. The agent starts from the composed tree, gets the failing output as data, and makes the smallest fix. The planner then composes the outcome with the fix on top.</p>
+      <div class="field"><label for="rp-who">Agent</label><select id="rp-who">${workers.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}, ${esc(w.model)}</option>`).join("")}</select></div>
+      <div class="row"><button class="btn small primary" type="submit">Start repairing</button></div></form>`, (root, close) => {
+      root.querySelector("#rp").onsubmit = (ev) => {
+        ev.preventDefault();
+        const participant = root.querySelector("#rp-who").value;
+        act(async () => { await api(`${BASE}/candidates/${t.dataset.repair}/repair`, { method: "POST", body: JSON.stringify({ participant }) }); close(); }, "Repairing");
+      };
+    });
   }
   if (t.dataset.reconcile) {
     const workers = S.participants.filter((p) => p.kind === "agent" && ["codex", "nest-agent"].includes(p.harness));
