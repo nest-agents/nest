@@ -31,27 +31,16 @@ export function estimateCost(model: string, inputTokens: number, maxOutputTokens
   return Math.max(1, Math.ceil(inputTokens * p.inPerToken + maxOutputTokens * p.outPerToken));
 }
 
+/** Every provider request goes through the account's AI Gateway, which logs it and caps daily spend. */
 export const gatewayBase = (env: Env) => `https://gateway.ai.cloudflare.com/v1/${env.ACCOUNT_ID}/${env.AI_GATEWAY_ID}`;
 
-/**
- * Where a provider request really goes. Agents and reviewers always address the gateway; in "direct"
- * mode (before the gateway exists) the same path is sent straight to the provider.
- */
 /**
  * The gateway is authenticated, so provider requests through it carry its token (a secret scoped to AI
  * Gateway: Run on this account). Workers AI calls through the binding are authenticated automatically.
  */
-export function gatewayHeaders(env: Env): Record<string, string> {
-  const token = (env as unknown as { CF_AIG_TOKEN?: string }).CF_AIG_TOKEN;
-  return (env.AI_GATEWAY_MODE as string) === "gateway" && token ? { "cf-aig-authorization": `Bearer ${token}` } : {};
-}
+export const gatewayHeaders = (env: Env): Record<string, string> => ({ "cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN}` });
 
-export function providerTarget(env: Env, provider: string, rest: string): string | null {
-  if ((env.AI_GATEWAY_MODE as string) === "gateway") return `${gatewayBase(env)}/${provider}/${rest}`;
-  if (provider === "openai") return `https://api.openai.com/v1/${rest.replace(/^v1\//, "")}`;
-  if (provider === "openrouter") return `https://openrouter.ai/api/v1/${rest.replace(/^v1\//, "")}`;
-  return null;
-}
+export const providerTarget = (env: Env, provider: "openai" | "openrouter", rest: string) => `${gatewayBase(env)}/${provider}/${rest}`;
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 export type ChatResult = { text: string; inputTokens: number; outputTokens: number; model: string };
@@ -72,7 +61,7 @@ export async function chat(
   if (!(await opts.reserve(id, estimateCost(route.model, promptTokens, maxTokens), route.model))) throw new Error("SPEND_CAP_REACHED");
 
   if (route.provider === "workers-ai") {
-    const options = (env.AI_GATEWAY_MODE as string) === "gateway" ? { gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} } } : {};
+    const options = { gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} } };
     const out = (await env.AI.run(route.model as keyof AiModels, { messages, max_tokens: maxTokens } as never, options as never)) as { response?: string; choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const text = out.response ?? out.choices?.[0]?.message?.content ?? "";
     const inT = out.usage?.prompt_tokens ?? promptTokens;
@@ -82,7 +71,7 @@ export async function chat(
     return { text, inputTokens: inT, outputTokens: outT, model: route.model };
   }
 
-  const url = providerTarget(env, route.provider, route.provider === "openai" ? "chat/completions" : "v1/chat/completions")!;
+  const url = providerTarget(env, route.provider, route.provider === "openai" ? "chat/completions" : "v1/chat/completions");
   const key = route.provider === "openai" ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY;
   const res = await fetch(url, {
     method: "POST",

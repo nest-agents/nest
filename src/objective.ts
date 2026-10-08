@@ -3,7 +3,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import type { Citation, ParticipantKind, Verdict } from "./protocol";
-import { closure, planFrontier, type ContributionNode, type ContributionStatus } from "./domain/graph";
+import { planFrontier, type ContributionNode, type ContributionStatus } from "./domain/graph";
 import { route, effectivePolicy, type ReviewFact, type ReviewPolicy, type Routing } from "./domain/review";
 
 type Row = Record<string, string | number | null>;
@@ -479,8 +479,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       });
       const who = this.participant(r.reviewer);
       const verb = r.triage ? "triaged" : { approve: "approved", changes: "requested changes on", block: "blocked", comment: "commented on" }[r.verdict];
-      const direct = (this.env.AI_GATEWAY_MODE as string) !== "gateway";
-      const svc = r.kind === "person" ? "Nest" : r.family === "workers-ai" || reviewer.model.startsWith("@cf/") ? "Workers AI" : direct ? (r.family === "openai" ? "OpenAI" : "OpenRouter") : "AI Gateway";
+      const svc = r.kind === "person" ? "Nest" : reviewer.model.startsWith("@cf/") ? "Workers AI" : "AI Gateway";
       this.emit(svc, "review", `${who?.name ?? r.reviewer} ${verb} ${r.target.slice(2, 6)}`, { review: r.id, target: r.target, verdict: r.verdict });
     }
     return { review: this.reviews(r.target).find((x) => x.id === r.id)!, routing: this.reroute(r.target) };
@@ -578,11 +577,6 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   // ---------- citations and blast radius ----------
 
-  citations(): { source: string; kind: string; item: string; version: number }[] {
-    return this.sql.exec<Row>("SELECT source, source_kind, item, version FROM citations").toArray()
-      .map((r) => ({ source: String(r.source), kind: String(r.source_kind), item: String(r.item), version: Number(r.version) }));
-  }
-
   blastRadius(item: string, newVersion: number) {
     const rows = this.sql.exec<Row>("SELECT DISTINCT source, source_kind FROM citations WHERE item = ? AND version < ?", item, newVersion).toArray();
     const by = (k: string) => rows.filter((r) => r.source_kind === k).map((r) => String(r.source)).sort();
@@ -604,11 +598,6 @@ export class ObjectiveDO extends DurableObject<Env> {
   frontier(accepted: string[], limit = 6) {
     const nodes = this.graphNodes();
     return planFrontier(nodes, new Set(accepted), limit);
-  }
-
-  closureOf(selected: string[], accepted: string[]): string[] {
-    const nodes = this.graphNodes();
-    return closure(nodes, selected, new Set(accepted));
   }
 
   upsertCandidate(c: Omit<Candidate, "createdAt">): Candidate {

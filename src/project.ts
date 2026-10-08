@@ -82,15 +82,6 @@ export class ProjectDO extends DurableObject<Env> {
     return this.current();
   }
 
-  contextVersion(id: string, version: number): ContextItem | null {
-    const r = this.sql.exec<Record<string, string | number | null>>("SELECT * FROM context_items WHERE id = ? AND version = ?", id, version).toArray()[0];
-    return r ? rowToItem(r) : null;
-  }
-
-  contextHistory(id: string): ContextItem[] {
-    return this.sql.exec<Record<string, string | number | null>>("SELECT * FROM context_items WHERE id = ? ORDER BY version", id).toArray().map(rowToItem);
-  }
-
   /**
    * Notes compound context without changing the accepted requirement set: rejected approaches with the
    * reason they lost, and review findings that held up. Every later pack carries them.

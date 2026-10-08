@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonical, contributionId, parseCitation, parseTrailers } from "../src/protocol";
 import { authoredOn, closure, GraphError, planFrontier, type ContributionNode } from "../src/domain/graph";
-import { blastRadius, staleCitations } from "../src/domain/context";
 import { DEFAULT_POLICY, effectivePolicy, protectedMatch, route, type ReviewFact } from "../src/domain/review";
 import { acceptError, type CandidateFacts, type Head } from "../src/domain/accept";
 
@@ -215,20 +214,6 @@ describe("frontier", () => {
     );
     const f = planFrontier(g, new Set(["enc", "bg"]));
     expect(f.map((c) => c.order)).toEqual([["repair"]]);
-  });
-});
-
-describe("context", () => {
-  it("finds stale citations and the blast radius of a new version", () => {
-    const current = new Map([["req/cols", 2], ["dec/jobs", 1]]);
-    expect(staleCitations([{ item: "req/cols", version: 1 }, { item: "dec/jobs", version: 1 }], current)).toEqual([{ item: "req/cols", version: 1 }]);
-    const edges = [
-      { from: "c1", kind: "contribution" as const, cite: { item: "req/cols", version: 1 } },
-      { from: "c2", kind: "contribution" as const, cite: { item: "req/cols", version: 2 } },
-      { from: "r1", kind: "review" as const, cite: { item: "req/cols", version: 1 } },
-      { from: "c3", kind: "contribution" as const, cite: { item: "dec/jobs", version: 1 } },
-    ];
-    expect(blastRadius(edges, "req/cols", 2)).toEqual({ contributions: ["c1"], reviews: ["r1"], packs: [] });
   });
 });
 

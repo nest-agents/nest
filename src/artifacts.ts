@@ -134,12 +134,6 @@ export class ArtifactsClient {
     return await blob.text();
   }
 
-  async readBytes(repoName: string, ref: string, path: string): Promise<Uint8Array | null> {
-    using repo = await this.binding.get(repoName);
-    const blob = await repo.readFile({ ref, path });
-    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
-  }
-
   async listFiles(repoName: string, commit: string, limit = 5000): Promise<{ path: string; hash: string; mode: string }[]> {
     using repo = await this.binding.get(repoName);
     const c = await repo.readCommit(commit);

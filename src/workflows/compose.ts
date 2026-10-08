@@ -9,6 +9,7 @@ import type { ObjectiveDO } from "../objective";
 import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
 import { readProjectConfig } from "../projects";
 import { acceptCandidate, mirrorMain } from "../accepting";
+import { repairBrief, startTask } from "../tasks";
 import { ArtifactsClient } from "../artifacts";
 import { sha256Hex } from "../protocol";
 
@@ -347,14 +348,12 @@ async function openRepair(env: Env, objectiveId: string, candidateId: string, na
   const id = `t_repair-${candidateId.slice(1, 9)}`;
   const existing = await objective.task(id);
   if (existing) return;
-  const { repairBrief } = await import("../tasks");
   await objective.createTask({
     id, title: `Repair ${name.replace(/^Outcome: /, "")}`, baseVersion, baseCommit,
-    brief: await repairBrief(candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`, detail),
+    brief: repairBrief(candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`, detail),
   });
   // One automatic repair at a time: a cascade is impossible whatever else goes wrong.
   if (env.AUTO_REPAIR_AGENT && !(await objective.repairRunning())) {
-    const { startTask } = await import("../tasks");
     await startTask(env, objectiveId, id, env.AUTO_REPAIR_AGENT, "agent").catch((e) => objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`));
   }
 }

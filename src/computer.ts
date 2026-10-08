@@ -399,9 +399,8 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     // Only the metered generation endpoints: no files, batches, images, audio or fine-tuning.
     const ALLOWED: Record<string, string[]> = { openai: ["responses", "chat/completions"], openrouter: ["v1/chat/completions", "chat/completions"] };
     if (!ALLOWED[provider]?.includes(rest) || request.method !== "POST") return deny(`${provider}/${rest} is not an allowed model endpoint`);
-    const target = providerTarget(this.env, provider, rest);
+    const target = providerTarget(this.env, provider as "openai" | "openrouter", rest);
     const key = provider === "openai" ? this.env.OPENAI_API_KEY : this.env.OPENROUTER_API_KEY;
-    if (!target) return deny(`provider ${provider} is not enabled`);
     let parsed: Record<string, unknown>;
     try { parsed = JSON.parse(await request.text()) as Record<string, unknown>; } catch { return deny("model requests must be JSON"); }
     const model = String(parsed.model ?? "unknown");

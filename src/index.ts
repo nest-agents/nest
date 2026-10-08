@@ -12,7 +12,7 @@ import { ConfigError } from "./projectconfig";
 import { bootstrapProject, createObjective, createProject, objectivePolicy, readProjectConfig, syncRoster } from "./projects";
 import { chat, isPriced, parseJsonReply } from "./models";
 import { OBJECTIVE_ID, PROJECT_ID } from "./registry";
-import { reconcileConflict, requestCompose, startTask, stopTask } from "./tasks";
+import { reconcileConflict, repairOutcome, requestCompose, startTask, stopTask } from "./tasks";
 
 export { RegistryDO } from "./registry";
 export { ProjectDO } from "./project";
@@ -419,7 +419,6 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
   if (repair && request.method === "POST") {
     require(p, "owner");
     const b = await body<{ participant?: string }>(request);
-    const { repairOutcome } = await import("./tasks");
     return json(await repairOutcome(env, objectiveId, repair[1]!, b.participant ?? env.AUTO_REPAIR_AGENT));
   }
 
