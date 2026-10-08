@@ -55,6 +55,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     if (!has("contributions", "flags")) this.sql.exec("ALTER TABLE contributions ADD COLUMN flags TEXT NOT NULL DEFAULT '[]'");
     if (!has("contributions", "adds")) this.sql.exec("ALTER TABLE contributions ADD COLUMN adds TEXT NOT NULL DEFAULT '[]'");
     if (!has("tasks", "base_commit")) this.sql.exec("ALTER TABLE tasks ADD COLUMN base_commit TEXT");
+    if (!has("contributions", "retired")) this.sql.exec("ALTER TABLE contributions ADD COLUMN retired INTEGER NOT NULL DEFAULT 0");
   }
 
   private schema(): void {
@@ -70,7 +71,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS contributions(id TEXT PRIMARY KEY, seq INTEGER NOT NULL, task TEXT, epoch INTEGER NOT NULL, author TEXT NOT NULL,
         repo TEXT NOT NULL, commit_sha TEXT NOT NULL, parent TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, alternative TEXT,
         supersedes TEXT, status TEXT NOT NULL, paths TEXT NOT NULL, special INTEGER NOT NULL, declared TEXT NOT NULL, assumes TEXT NOT NULL, created_at TEXT NOT NULL,
-        flags TEXT NOT NULL DEFAULT '[]', adds TEXT NOT NULL DEFAULT '[]');
+        flags TEXT NOT NULL DEFAULT '[]', adds TEXT NOT NULL DEFAULT '[]', retired INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS contributions_commit ON contributions(commit_sha);
       CREATE TABLE IF NOT EXISTS deps(contribution TEXT NOT NULL, requires TEXT NOT NULL, PRIMARY KEY(contribution, requires));
       CREATE TABLE IF NOT EXISTS citations(source TEXT NOT NULL, source_kind TEXT NOT NULL, item TEXT NOT NULL, version INTEGER NOT NULL, lines TEXT,
@@ -107,15 +108,17 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   events(after = 0, limit = 200): NestEvent[] {
     return this.sql
-      .exec<Row>("SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?", after, Math.min(limit, 1000))
+      .exec<Row>("SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?", Number(after) || 0, Math.max(1, Math.min(Math.floor(Number(limit)) || 200, 1000)))
       .toArray()
       .map(rowToEvent);
   }
 
   /** The most recent events, oldest first. */
   recentEvents(limit = 200): NestEvent[] {
+    // SQLite reads a negative LIMIT as no limit, so the bound is clamped on both sides.
+    const n = Math.max(1, Math.min(Math.floor(Number(limit)) || 200, 1000));
     return this.sql
-      .exec<Row>("SELECT * FROM (SELECT * FROM events ORDER BY seq DESC LIMIT ?) ORDER BY seq", Math.min(limit, 1000))
+      .exec<Row>("SELECT * FROM (SELECT * FROM events ORDER BY seq DESC LIMIT ?) ORDER BY seq", n)
       .toArray()
       .map(rowToEvent);
   }
@@ -332,7 +335,8 @@ export class ObjectiveDO extends DurableObject<Env> {
     const now = new Date().toISOString();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        "INSERT INTO contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, '[]', ?)",
+        `INSERT INTO contributions(id, seq, task, epoch, author, repo, commit_sha, parent, title, message, alternative, supersedes, status,
+           paths, special, declared, assumes, created_at, flags, adds, retired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, '[]', ?, 0)`,
         c.id, seq, c.task, c.epoch, c.author, c.repo, c.commit, c.parent, c.title, c.message, c.alternative, c.supersedes,
         JSON.stringify(c.paths), c.special ? 1 : 0, JSON.stringify(c.declared), JSON.stringify(c.assumes), now, JSON.stringify(c.adds ?? []),
       );
@@ -663,7 +667,7 @@ export class ObjectiveDO extends DurableObject<Env> {
     const losingTasks = new Map<string, string>();
     for (const x of all) if (x.alternative && x.task && chosen.has(x.alternative) && chosen.get(x.alternative) !== x.task) losingTasks.set(x.task, x.alternative);
     const retire = (x: Contribution, reason: string) => {
-      this.sql.exec("UPDATE contributions SET status = 'superseded', flags = ? WHERE id = ?", JSON.stringify([...new Set([...x.flags, reason])]), x.id);
+      this.sql.exec("UPDATE contributions SET status = 'superseded', retired = 1, flags = ? WHERE id = ?", JSON.stringify([...new Set([...x.flags, reason])]), x.id);
       this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'retired' WHERE target = ? AND status = 'open'", x.id);
       this.emit("Nest", "retired", `Retired ${x.title} by ${this.participant(x.author)?.name ?? x.author}: ${reason}`, { contribution: x.id });
     };
@@ -684,7 +688,8 @@ export class ObjectiveDO extends DurableObject<Env> {
     for (let changed = true; changed;) {
       changed = false;
       const now = this.contributions();
-      const retired = new Set(now.filter((x) => x.status === "superseded" && x.flags.some((f) => /was not chosen|already has|was retired/.test(f))).map((x) => x.id));
+      // Retirement is a recorded fact, never inferred from the text of a flag.
+      const retired = new Set(this.sql.exec<Row>("SELECT id FROM contributions WHERE retired = 1").toArray().map((r) => String(r.id)));
       for (const x of now) {
         if (["accepted", "superseded", "blocked"].includes(x.status)) continue;
         const base = x.requires.find((d) => retired.has(d));

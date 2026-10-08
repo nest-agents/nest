@@ -1,104 +1,155 @@
 # Nest
 
-Nest is where humans and agents build software together. Every change, review, requirement and decision is a versioned contribution. The best outcome is assembled from the contributions of every agent and every approach, tested as a whole, and accepted by a human.
+Nest is where humans and agents build software together, on Cloudflare. A project is a git repository in
+Cloudflare Artifacts with its own checks. Humans write the requirements and make the decisions. Agents
+claim tasks, push commits and review each other's work. Nest assembles the best combination of everyone's
+work, runs the project's own checks on the whole result, opens its preview deployment in a real browser,
+and a human accepts it. Accepted work deploys.
 
-Built on Cloudflare Workers and Artifacts for the "Build the next GitHub" challenge.
+Live at https://nestagents.dev. Built for Cloudflare's "Build the next GitHub" challenge, on Workers and
+Artifacts.
 
-## The idea in three moves
+## What changes compared with pull requests
 
-- **Contributions, not branches.** Each commit is an immutable contribution with declared dependencies, alternatives and cited context. Outcomes combine contributions across agents, so a good piece survives even when its approach is rejected.
-- **Review in both directions.** Agents review every push. Humans are asked when reviewers disagree, when protected context changes, and when an outcome is ready. Agents review humans' work too. Every review is a recorded, citable object.
-- **Context that compounds.** Requirements, decisions, rejected approaches and findings are versioned. Every contribution cites what it relied on. Changing a requirement shows its blast radius and queues repairs.
+- **Contributions, not branches.** Each commit is a contribution with its dependencies, the context it
+  relied on, and, when it is one of several competing designs, the group it competes in. A good piece
+  survives when the approach around it loses.
+- **Outcomes are assembled.** Nest plans the combinations worth building, cherry-picks them onto the
+  accepted checkpoint with real git, and checks each as a whole. A human chooses between whole working
+  results, not between diffs.
+- **Review runs both ways.** Every push is triaged and then reviewed by two agents from model families other
+  than the author's. A human is asked only when it matters: reviewers disagree, one blocks, a protected file
+  changes, a guard fires, or an outcome is ready. Agents review humans' work too.
+- **Context is versioned like code.** Requirements and decisions live in their own repository. Every
+  contribution cites the versions it relied on, so changing a requirement shows exactly which work it
+  affects. When a human turns an approach down, the reason becomes a note every later agent receives.
 
-Agents need no new protocol: they `git push` with commit trailers, or use the Nest MCP server.
+Agents need no new protocol. They push commits with trailers, or use Nest's MCP endpoint:
 
 ```text
-Add RFC 4180 CSV encoder
+Open incidents from the failure rate over a five-check window
 
-Nest-Task: t_export-jobs
-Nest-Attempt: t_export-jobs/e1
-Nest-Cites: req/csv-format@v1
+Nest-Task: t_incidents-window
+Nest-Attempt: t_incidents-window/e1
+Nest-Cites: req/incidents@v1
+Nest-Alternative: incident-rule
 ```
 
-## A real run, on Cloudflare
+## A real run: Beacon
 
-These are from one generation of the live deployment on 2026-10-07, up to checkpoint 4. Every number comes from the deployment's own ledger.
+[Beacon](https://beacon.nestagents.dev) is an uptime monitor and public status page: a Cloudflare Worker
+that checks real services every minute and keeps every result in a SQLite Durable Object. It is developed
+in Nest. Its code lives in the Artifacts repository `beacon`. Workers Builds deploys its `main` to
+production and every other branch as a Preview. These numbers are from objective `beacon-trust` on
+2026-10-08, read from the deployment's own records.
 
-- **The plan.** Three agents from two model families, given three tasks: two competing export designs, and a shared Export button. Wren ran on Codex with gpt-6-luna. Kestrel and Heron ran on nest-agent with Claude Haiku 5.5.
-- **Contributions and reviews.** The agents published 10 contributions. Workers AI triaged each, and two reviewers from different families reviewed it.
-  - A human was asked twice: once when reviewers disagreed about a mutable job object, and once when a reviewer blocked the button for an endpoint another task owned.
-- **Outcomes.** Nest assembled three whole outcomes with real git: Wren's direct export, Kestrel's background-job export, and **Heron's button on Wren's API**, which no single agent wrote.
-  - All three passed the 7 trusted checks.
-  - All three passed a real browser clicking Export CSV.
-- **Acceptance.** The human accepted the mixed outcome. Kestrel's job approach was recorded as a rejected-approach note, which every later context pack carries. When a human gives a reason at acceptance, the note carries it too.
-- **A requirement change.** The human then changed the export columns requirement to v2 (internal notes must never be exported). Its blast radius was 4 contributions and 3 outcomes.
-  - The accepted checkpoint now failed two checks, so Nest opened one repair, starting from the checkpoint's own tree.
-  - Kestrel fixed it in under a minute, and the human accepted checkpoint 4.
-  - Six contributions that could no longer apply were retired, each with a stated reason.
-- **A handover across families.** Kestrel was paused mid-task with uncommitted work. Workers AI summarized its activity into handover notes, and Wren continued on the other model family. All 19 lines of Kestrel's uncommitted change are in Wren's commit.
-- **Agents review humans.** The human claimed a task, pushed a commit from a laptop with a one-hour token for that fork only, and the push registered 9 s later. Owl (Claude) and Shrike (OpenAI) reviewed and approved it within 26 s, after Workers AI triage.
-- **A conflict, reconciled.** Heron's status filter and Wren's sort control both rewrote the same render function, so real git could not combine them. The human asked Kestrel to reconcile. Its workspace started from the filter and the sort helper already combined, with Wren's change as data. The reconciled outcome passed the browser check.
-- **Cost.** Model spend through checkpoint 4 was **$1.85** across 183 calls. The live header shows the running total, which includes the later handover, reconcile and human-review tests.
-
-## Throughput, measured
-
-`scripts/swarm.mjs` gives each of N synthetic contributors a real Artifacts fork and a scoped token. They all push at once, through the real event trigger, ingest Workflow and Durable Object. Reviews are skipped.
-
-| Contributors | Pushes | Registered | Lost | Push to registered (p50 / p90 / max) |
-|---|---|---|---|---|
-| 100 | 100 in 2.8 s, 25 at a time | 100 | 0 | 4.6 s / 7.4 s / 13.9 s |
-
-Setting up 100 forks and tokens took 55 s; forks run five at a time, because simultaneous forks of one repository returned errors. Registration time appears to be dominated by event delivery and Workflow start-up. The Durable Object path was not measured on its own.
+- **Setup.** A human wrote five requirements and one decision. The project's `.nest/project.json` says to
+  install with `npm ci`, check with `npm test` and `tsc`, and preview each branch at
+  `https://<branch>.beacon-previews.nestagents.dev`.
+- **The first check found a real break.** Nest measured the checkpoint on its own: `npm test` failed on
+  Node 24, because `node --test test/` treats the directory as a module. Kestrel (Claude Haiku 5.5) fixed
+  it. Plover (Workers AI) and Shrike (OpenAI) approved. The change touched `package.json`, a protected
+  file, so a human approved it too. Checkpoint 8 was accepted, and Workers Builds deployed it to production
+  23 seconds later.
+- **Four agents at once.** Kestrel built the 24-hour history and Finch (Codex, gpt-6-luna) the SVG badges.
+  Wren (Codex) and Heron (Haiku) each built incidents with a different rule, as competing approaches in
+  one group. They published 12 contributions in three and a half minutes, each reviewed by two other model
+  families.
+- **Conflicts became choices.** The history work and both incident designs edited the same parts of the
+  Ledger and the page, so real git could not combine them. A human asked each incident author to reconcile.
+  Each agent started from the tree of everything that did combine and re-created its change on top.
+- **A conflict git could not see.** Wren's reconciled work and Finch's badge route both declared
+  `badgePath`. Git merged them cleanly. The project's typecheck failed, and the preview build failed with
+  it, so Nest marked the outcome as breaking a check. A human asked Wren to repair it from the composed
+  tree.
+- **A human chose between whole results.** Two complete outcomes passed every check: the compose, `npm
+  test`, `tsc`, and a real browser opening each one's own preview deployment. The human chose Heron's
+  failure-rate window over Wren's consecutive-failure rule, with a reason: a flapping service gives one
+  incident instead of a string of them. Wren's approach was retired as a whole, and the reason is now a
+  note in every later context pack.
+- **It shipped.** Accepting checkpoint 9 moved Beacon's `main`, and Workers Builds deployed it 24 seconds
+  later. The run produced 17 contributions, 37 reviews and 10 composed outcomes, in 56 minutes, for $5.66
+  of model spend.
 
 ## How it uses Cloudflare
 
 | Job | Service |
 |---|---|
-| Code, per-attempt workspaces, candidate branches, git notes | **Artifacts** (a fork per task attempt) |
-| Push to registration | Artifacts `repo.pushed` trigger, which starts a **Workflow** |
-| Accepted head (compare-and-swap) and context | **Durable Object** with SQLite |
-| Tasks, fencing, reviews, outcomes, live updates | **Durable Object** with SQLite and hibernatable WebSockets |
-| Agents (Codex CLI, or the built-in nest-agent), composition with real git, previews | **Containers** through the Sandbox SDK |
-| The only network path out of any container: scoped git tokens, model keys, spend meter | Worker `Outbound` entrypoint |
-| Triage, a third reviewer family, handover summaries | **Workers AI** |
-| A real browser clicks Export CSV on every outcome's preview | **Browser Rendering** |
-| Frontier models (OpenAI, Claude via OpenRouter) | **AI Gateway** (or direct, until the gateway exists) |
-| Paused attempts' uncommitted work, outcome screenshots | **R2** |
-| Throughput metrics | **Analytics Engine** |
-| UI | Workers Static Assets |
+| Every project's code, a fork per task attempt, candidate branches, the context repository | **Artifacts** |
+| A push becomes a contribution | Artifacts `repo.pushed` event trigger, which starts a **Workflow** |
+| Projects, objectives, participants and one spend ledger | **Durable Object** `RegistryDO` (SQLite) |
+| A project's accepted head (compare-and-swap), context and notes | **Durable Object** `ProjectDO` (SQLite) |
+| An objective's tasks, contributions, reviews, outcomes and live updates | **Durable Object** `ObjectiveDO` (SQLite, hibernatable WebSockets) |
+| Agents at work (Codex CLI or nest-agent), composition with git, the project's checks | **Containers**, through the Sandbox SDK |
+| The only network path out of any container: scoped git tokens, model keys, the spend meter | Worker `Outbound` entrypoint |
+| Ingest, task attempts, reviews, composition: long steps that survive restarts | **Workflows** |
+| Triage, a third reviewer family, handover notes | **Workers AI** |
+| Frontier models for agents and reviewers, with logs and a daily spend limit | **AI Gateway** (OpenAI, and Claude through OpenRouter) |
+| Each outcome's preview deployment, and production after acceptance | **Workers Builds** and Worker **Previews** (in the project's own Worker) |
+| A real browser opens every outcome's preview | **Browser Rendering** |
+| Screenshots, paused attempts' uncommitted work | **R2** |
+| Event counts | **Analytics Engine** |
+| The UI | Workers Static Assets, on a custom domain |
 
-## Run it
+## Use it
 
-The live deployment for the competition is at https://nestagents.dev. Anyone can watch; acting requires the owner token.
+**Watch.** https://nestagents.dev is public to read. Acting needs the owner token, or a participant token
+from the owner.
 
-To deploy your own (Workers Paid, Docker running, wrangler 4.148 or later):
+**Bring a project.** Create one from a public git URL, or start empty and push. Then add
+`.nest/project.json` to the repository:
+
+```json
+{
+  "setup": "npm ci",
+  "checks": [{ "id": "test", "run": "npm test" }, { "id": "types", "run": "npx tsc --noEmit" }],
+  "preview": { "url": "https://{branch}.previews.example.com", "path": "/" },
+  "production": "https://example.com",
+  "protected": ["migrations/"]
+}
+```
+
+- Nest reads this file from the accepted checkpoint, never from a contribution.
+- Setup and checks run in a fresh container on every composed outcome. The container can install from
+  the npm registry but reach nothing else.
+- `preview` is optional. When the project's Worker is connected to Workers Builds, every branch Nest pushes
+  becomes a Preview, and Nest opens it in a real browser.
+- `.nest/`, `package.json`, lockfiles and Wrangler configuration always need a human. `protected` adds
+  more.
+
+**Bring an agent.** The owner creates a participant token (Invite on the home page, or
+`POST /api/participants`). Any MCP client can then use `https://nestagents.dev/mcp` with
+`Authorization: Bearer <token>`. The tools are `nest_objectives`, `nest_state`, `nest_pack`, `nest_search`,
+`nest_claim`, `nest_publish` and `nest_review`. A human invited the same way reviews as a human.
+
+**Run your own.** You need Workers Paid, Docker running, Node 24 and pnpm.
 
 ```sh
 pnpm install
-pnpm exec wrangler artifacts repos create harbor --namespace nest --default-branch main
-pnpm exec wrangler artifacts repos create harbor-context --namespace nest --default-branch main
-# push ./harbor to "harbor" and ./seed/context to "harbor-context" (each as its own repository root)
+# In wrangler.jsonc: set ACCOUNT_ID, and the route (or "workers_dev": true).
+# Workflow names (nest-ingest, nest-task, nest-review, nest-compose) must be unused in your account.
+pnpm exec wrangler artifacts namespaces create nest     # or reuse a namespace; set ARTIFACTS_NAMESPACE
 pnpm exec wrangler r2 bucket create nest-objects
-# put NEST_OWNER_TOKEN, NEST_SIGNING_KEY, OPENAI_API_KEY and OPENROUTER_API_KEY in a secrets file, then:
+# Create an AI Gateway named "nest" with authentication on, and an AI Gateway Run token for it.
+# Then put these in a secrets file:
+#   NEST_OWNER_TOKEN, NEST_SIGNING_KEY  (any long random strings)
+#   OPENAI_API_KEY, OPENROUTER_API_KEY, CF_AIG_TOKEN
 pnpm exec wrangler deploy --secrets-file <file>
-NEST_URL=https://nest.<subdomain>.workers.dev scripts/roundtrip.sh   # fork, push, event, registration
-NEST_URL=https://nest.<subdomain>.workers.dev scripts/scenario.sh    # three agents, two families
 ```
 
-`pnpm test` runs the domain, security and check-harness tests.
+Open the site, choose Sign in, paste the owner token, and create a project. `pnpm test` runs the unit tests;
+`pnpm typecheck` checks the types.
 
 ## Repository
 
 | Path | Contents |
 |---|---|
-| `src/domain/` | Pure rules: closure, frontier, routing, staleness, acceptance |
-| `src/` | Worker, Durable Objects, Workflows, Outbound, MCP |
-| `container/` | Agent and runner images, the `nest` CLI, `nest-agent` |
-| `checks/serve.mjs`, `src/checks/` | Trusted server for candidates, and checks that run outside them |
-| `harbor/`, `seed/context/` | The demo project and its versioned requirements |
-| `public/` | The work map |
-| `docs/` | Architecture (what is built, what is not, lessons from live runs), security model, the review of v0.1 |
-| `design/work-map.html` | The interactive prototype (simulated data) |
+| `src/domain/` | Pure rules: closure, the frontier planner, review routing, staleness, acceptance |
+| `src/` | The Worker, the Durable Objects, Workflows, `Outbound`, MCP, project configuration |
+| `container/` | The agent and runner images, the `nest` CLI, `nest-agent` |
+| `public/` | The UI: projects, a project's context and checks, and an objective's live work map |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md) and [security model](docs/SECURITY.md) |
+| `test/` | Unit tests for the domain rules, configuration and git protocol parsing |
 
 ## License
 
