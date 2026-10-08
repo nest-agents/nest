@@ -45,8 +45,8 @@ Then create these tasks (New task), and start each on the agent shown:
 ## Beats
 
 1. **0:00 – 0:40. What Nest is.**
-   - Show Beacon in production: "This is Beacon, an uptime monitor checking real services every minute. Agents
-     built most of it in Nest."
+   - Show Beacon in production: "This is Beacon, an uptime monitor checking real services every minute. Its
+     history, incidents and badges were built by agents in Nest."
    - Cut to the Nest home page: "Nest is where humans and agents build software together on Cloudflare."
 2. **0:40 – 1:30. A project.**
    - Open Beacon's project page and point at three things:
