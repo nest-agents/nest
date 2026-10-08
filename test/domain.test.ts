@@ -172,6 +172,17 @@ describe("frontier", () => {
     expect(pending.every((o) => !(o.includes("sort") && o.includes("fixed")))).toBe(true);
     expect(planFrontier(g("approved"), new Set()).map((f) => f.order.join(","))).toEqual(["filter,fixed"]);
   });
+  it("carries work built on a replaced contribution onto its replacement", () => {
+    const g = graph(
+      C("history", 1),
+      C("store", 2),
+      C("list", 3, { requires: ["store"] }),
+      C("store2", 4, { requires: ["history"], supersedes: "store", status: "approved" }),
+    );
+    const orders = planFrontier(g, new Set()).map((f) => f.order.join(","));
+    expect(orders[0]).toBe("history,store2,list");
+    expect(orders.every((o) => !o.split(",").includes("store"))).toBe(true);
+  });
   it("keeps a pending replacement plannable when it sits in an explicit alternative group", () => {
     const g = graph(
       C("enc", 1),

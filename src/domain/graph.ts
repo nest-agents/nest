@@ -122,10 +122,11 @@ export type PlannedCandidate = { selected: string[]; order: string[]; choice: Re
  * other live contribution whose dependencies survive that choice. Bounded and deterministic.
  */
 export function planFrontier(
-  nodes: Map<string, ContributionNode>,
+  graphNodes: Map<string, ContributionNode>,
   accepted: Set<string>,
   limit = 8,
 ): PlannedCandidate[] {
+  let nodes = graphNodes;
   const live = [...nodes.values()].filter(
     (n) => !accepted.has(n.id) && n.status !== "blocked" && n.status !== "superseded" && n.status !== "accepted",
   );
@@ -133,6 +134,19 @@ export function planFrontier(
   // work, which only a human-requested reconcile can publish, takes effect once it is approved; until
   // then both stay plannable, and closure never selects both.
   const replaced = new Set(live.filter((n) => n.status === "approved" || nodes.get(n.supersedes ?? "")?.status === "superseded").map((n) => n.supersedes).filter((x): x is string => !!x));
+  // Work built on a contribution that was replaced is carried onto its replacement: git replays the
+  // dependent's own change on top of the replacement's tree, and a real overlap still shows as a conflict.
+  const replacementOf = new Map<string, string>();
+  for (const n of live) if (n.supersedes && replaced.has(n.supersedes) && !replaced.has(n.id)) replacementOf.set(n.supersedes, n.id);
+  const follow = (id: string) => { let x = id; for (let i = 0; i < 16 && replacementOf.has(x); i++) x = replacementOf.get(x)!; return x; };
+  if (replacementOf.size) {
+    const view = new Map(nodes);
+    for (const n of nodes.values()) {
+      if (!n.requires.some((d) => replacementOf.has(d))) continue;
+      view.set(n.id, { ...n, requires: [...new Set(n.requires.map(follow).filter((d) => d !== n.id))] });
+    }
+    nodes = view;
+  }
   // A file the checkpoint already has cannot be created again: such work can never apply.
   const settled = new Set([...nodes.values()].filter((n) => accepted.has(n.id) || n.status === "accepted").flatMap((n) => n.adds ?? []));
   // Once a group is decided, every task that explored a losing option lost as a whole, tagged or not.
