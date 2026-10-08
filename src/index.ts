@@ -221,7 +221,8 @@ async function projectApi(request: Request, env: Env, p: Principal, projectId: s
   if (route === "GET /") {
     const [head, checkpoints, context, notes, objectives] = await Promise.all([project.head(), project.checkpoints(), project.context(), project.notes(), registry.objectives(projectId)]);
     const { config, configError } = await configAt(env, projectId, head?.commit ?? null);
-    const policy = head ? await objectivePolicy(env, projectId) : null;
+    // The page still renders when the configuration cannot be read; configError says why below.
+    const policy = head ? await objectivePolicy(env, projectId).catch(() => null) : null;
     return json({ me: p.kind, project: record, head, checkpoints, context, notes, objectives, config, configError, policy });
   }
   if (route === "POST /bootstrap") {

@@ -6,7 +6,7 @@ import { parseContextFile } from "./context";
 import { effectivePolicy, DEFAULT_POLICY, type ReviewPolicy } from "./domain/review";
 import { artifactsRemote, contextRepo, objectiveStub, projectRepo, projectStub, registryStub } from "./names";
 import type { ContextItem } from "./project";
-import { CONFIG_PATH, ConfigError, parseProjectConfig, type ProjectConfig } from "./projectconfig";
+import { CONFIG_PATH, parseProjectConfig, type ProjectConfig } from "./projectconfig";
 import { OBJECTIVE_ID, PROJECT_ID, RegistryError, type Participant } from "./registry";
 
 /** A commit's file never changes, so a parsed config is cached by repository and commit. */
@@ -69,12 +69,9 @@ export async function objectivePolicy(env: Env, project: string): Promise<Review
   const p = projectStub(env, project);
   const head = await p.head();
   const routing = (await p.context()).find((i) => i.id === "policy/review-routing")?.policy ?? null;
-  // A malformed configuration protects nothing beyond the floor; a read that merely failed must not
-  // quietly drop the paths it names, so that error propagates and the objectives keep their policy.
-  let config: ProjectConfig | null = null;
-  if (head) {
-    try { config = await readProjectConfig(env, project, head.commit); } catch (e) { if (!(e instanceof ConfigError)) throw e; }
-  }
+  // A configuration that cannot be read, or does not parse, must not quietly drop the paths it protects:
+  // the error propagates and every objective keeps the policy it had.
+  const config: ProjectConfig | null = head ? await readProjectConfig(env, project, head.commit) : null;
   return effectivePolicy({
     ...DEFAULT_POLICY,
     ...(routing ?? {}),

@@ -170,6 +170,8 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
           else if (ev.type === "tool" && ev.name === "write_file") notable.push(`wrote ${detail}`);
           else if (ev.type === "finish") notable.push(`finished: ${String(ev.summary ?? "").slice(0, 160)}`);
           else if (ev.type === "model_error") notable.push(`hit a model error (${String(ev.status ?? "")})`);
+          // Codex reports its own failures as events; an agent that stops on one must say so in the log.
+          else if (ev.type === "error" || ev.type === "turn.failed") notable.push(`hit an error: ${String(ev.message ?? (ev.error as { message?: unknown } | undefined)?.message ?? "").slice(0, 200)}`);
           else if (item?.type === "command_execution") notable.push(`ran ${String(item.command ?? "").slice(0, 80)}`);
           else if (item?.type === "file_change") notable.push(`changed files`);
         }
@@ -209,7 +211,9 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const ok = st.state === "exited" && st.exitCode === 0;
       const dirty = r.stdout.split("\n").filter((l) => /^[ MADRCU?]{2} /.test(l)).length;
       const published = await objective.attemptContributions(tid, epoch);
-      const why = ok ? "" : st.state === "running" ? "; stopped after the time limit" : `; ${st.tail?.slice(-200) ?? st.state}`;
+      // An agent that ends cleanly but publishes nothing still owes an explanation: its last output is it.
+      const why = !ok ? (st.state === "running" ? "; stopped after the time limit" : `; ${st.tail?.slice(-200) ?? st.state}`)
+        : published === 0 && st.tail?.trim() ? `; the agent ended without publishing. Its last output: ${st.tail.trim().slice(-300)}` : "";
       await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${published} contributions published${dirty ? `; ${dirty} files left uncommitted` : ""}${why}`);
       await computer.destroy("task finished");
       return { ok, results };
