@@ -131,7 +131,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       let risk = "medium";
       try {
         const r = await chat(this.env, { provider: "workers-ai", model: this.env.REVIEW_MODEL_WORKERS_AI }, messages, { maxTokens: 400, ...spend, metadata: { objective: objectiveId, contribution: id, role: "triage" } });
-        const parsed = parseJsonReply<Verdictish>(r.text);
+        const parsed = parseJsonReply<Verdictish>(r.text, "risk");
         summary = parsed?.summary ?? summary;
         risk = parsed?.risk ?? risk;
       } catch (e) {
@@ -176,7 +176,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
               // Larger changes produce longer verdicts, and Workers AI's model reasons before it answers.
               // Models that reason before answering spend output tokens on the reasoning first.
               const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: reviewer.family === "anthropic" ? 4000 : openai ? 6000 : 10_000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
-              parsed = parseJsonReply<Verdictish>(r.text);
+              parsed = parseJsonReply<Verdictish>(r.text, "verdict");
               reply = r.text;
               if (!parsed) note = `Reviewer reply was not a verdict${reply.trim() ? `: ${reply.trim().slice(0, 240)}` : " (empty reply)"}`;
             } catch (e) {

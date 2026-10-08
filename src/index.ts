@@ -180,7 +180,7 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
         { role: "system", content: 'Reply with JSON only: {"verdict":"approve","confidence":0.9,"summary":"one short sentence"}' },
         { role: "user", content: "Review this change: it fixes a typo in a README." },
       ], { maxTokens: 2000, reserve: (id, micro, model) => ledger.reserveSpend(id, null, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)), settle: (id, micro) => ledger.settleSpend(id, micro), metadata: { role: "probe" } });
-      return json({ ok: true, model: b.model, ms: Date.now() - started, parsed: parseJsonReply(r.text), tokens: { in: r.inputTokens, out: r.outputTokens }, text: r.text.slice(0, 300) });
+      return json({ ok: true, model: b.model, ms: Date.now() - started, parsed: parseJsonReply(r.text, "verdict"), tokens: { in: r.inputTokens, out: r.outputTokens }, text: r.text.slice(0, 300) });
     } catch (e) {
       return json({ ok: false, model: b.model, error: String((e as Error)?.message ?? e).slice(0, 400) });
     }

@@ -104,11 +104,13 @@ export async function chat(
 
 /**
  * The JSON object in a model reply. Models that reason before they answer put prose, sometimes with
- * braces, before the object, so every balanced object is tried and the last one that parses wins.
+ * braces, before the object, so every balanced top-level object is tried. With `key`, only objects that
+ * carry that key count. Exactly one must remain: a reply with two candidate verdicts, which is what an
+ * injected verdict quoted in prose would produce, is no verdict at all.
  */
-export function parseJsonReply<T>(text: string): T | null {
+export function parseJsonReply<T>(text: string, key?: string): T | null {
   const source = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
-  let found: T | null = null;
+  const found: T[] = [];
   for (let start = source.indexOf("{"); start >= 0; start = source.indexOf("{", start + 1)) {
     let depth = 0, inString = false, escaped = false;
     for (let i = start; i < source.length; i++) {
@@ -122,10 +124,14 @@ export function parseJsonReply<T>(text: string): T | null {
       if (ch === '"') inString = true;
       else if (ch === "{") depth++;
       else if (ch === "}" && --depth === 0) {
-        try { found = JSON.parse(source.slice(start, i + 1)) as T; } catch { /* not an object; keep scanning */ }
+        try {
+          const obj = JSON.parse(source.slice(start, i + 1)) as T;
+          if (obj && typeof obj === "object" && (!key || Object.hasOwn(obj, key))) found.push(obj);
+          start = i; // skip the objects nested inside this one
+        } catch { /* not an object; keep scanning */ }
         break;
       }
     }
   }
-  return found;
+  return found.length === 1 ? found[0]! : null;
 }

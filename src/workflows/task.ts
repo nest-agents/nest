@@ -252,6 +252,6 @@ async function summarizeProgress(
     settle: (rid: string, micro: number) => registryStub(env).settleSpend(rid, micro),
     metadata: { role: "handover" },
   });
-  const parsed = parseJsonReply<{ notes?: unknown[] }>(r.text);
+  const parsed = parseJsonReply<{ notes?: unknown[] }>(r.text, "notes");
   return (parsed?.notes ?? []).map((n) => `${name}'s progress: ${String(n).slice(0, 400)}`).slice(0, 4);
 }
