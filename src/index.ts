@@ -356,14 +356,17 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
 
   const reviewAgain = /^\/contributions\/(c_[0-9a-f]{12})\/review-again$/.exec(rest);
   if (reviewAgain && request.method === "POST") {
-    // When agent reviewers could not reach a verdict, a human can ask them once more.
+    // When agent reviewers could not reach a verdict, a human can ask them once more, or ask one by name.
     require(p, "owner");
+    const b = await body<{ reviewer?: string }>(request).catch(() => ({} as { reviewer?: string }));
     const c = await objective.contribution(reviewAgain[1]!);
     if (!c) throw new HttpError(404, "NOT_FOUND");
     if (!["proposed", "changes"].includes(c.status)) throw new HttpError(409, "ALREADY_DECIDED", `this contribution is ${c.status}`);
+    const reviewer = b.reviewer && /^[a-z][a-z0-9-]{1,31}$/.test(b.reviewer) ? b.reviewer : undefined;
+    if (reviewer && !(await objective.participants()).some((x) => x.id === reviewer && x.harness === "reviewer")) throw new HttpError(400, "NOT_A_REVIEWER", `${reviewer} is not a reviewer`);
     const id = `review-${c.id}-${Date.now().toString(36)}`;
-    await env.REVIEWS.create({ id, params: { objective: objectiveId, contribution: c.id } });
-    await objective.log("Workflows", "review", `A human asked agents to review ${c.title} again`, { contribution: c.id });
+    await env.REVIEWS.create({ id, params: { objective: objectiveId, contribution: c.id, ...(reviewer ? { reviewer } : {}) } });
+    await objective.log("Workflows", "review", `A human asked ${reviewer ?? "agents"} to review ${c.title} again`, { contribution: c.id });
     return json({ workflow: id });
   }
 

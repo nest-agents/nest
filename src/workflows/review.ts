@@ -11,7 +11,8 @@ import { parseCitation, type Citation, type Verdict } from "../protocol";
 import type { Participant } from "../objective";
 import { boundary, injectionFindings, UNTRUSTED_RULE, wrapUntrusted } from "../untrusted";
 
-type Params = { objective: string; contribution: string };
+/** `reviewer` asks one named reviewer, whatever routing would choose: a human's "ask Tern" on a stuck contribution. */
+type Params = { objective: string; contribution: string; reviewer?: string };
 type Verdictish = { verdict?: string; confidence?: number; summary?: string; findings?: { path?: string; line?: number; severity?: string; text?: string; cite?: string }[]; risk?: string };
 
 const retry = { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
@@ -140,13 +141,14 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       await objective.addReview({ id: `rv-triage-${id}`, target: id, reviewer: "triage", verdict: "comment", confidence: 1, summary: `Risk ${risk}. ${summary}`, findings: [], triage: true });
     });
 
-    // 2. Independent reviewers, as many as routing asks for.
-    for (let round = 0; round < 3; round++) {
+    // 2. Independent reviewers, as many as routing asks for, or the one reviewer a human named.
+    const named = event.payload.reviewer ? input.participants.find((p) => p.id === event.payload.reviewer && p.harness === "reviewer" && isPriced(p.model)) : null;
+    for (let round = 0; round < (named ? 1 : 3); round++) {
       const routing = await step.do(`routing ${round}`, async () => {
         const r = await objective.routing(id);
         return r.state === "needs-reviewers" ? { state: r.state, count: r.count, excludeFamilies: r.excludeFamilies } : { state: r.state, count: 0, excludeFamilies: [] as string[] };
       });
-      if (routing.state !== "needs-reviewers") break;
+      if (!named && routing.state !== "needs-reviewers") break;
       // Reviewers Nest runs itself: a registered reviewer with a priced model. An invited external reviewer
       // reviews through MCP, so it is never called from here.
       const reviewers = input.participants.filter((p) => p.harness === "reviewer" && isPriced(p.model) && !routing.excludeFamilies.includes(p.family));
@@ -154,7 +156,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       const preference = ["anthropic", "openai", "deepseek", "zhipu"];
       const rank = (f: string) => (preference.includes(f) ? preference.indexOf(f) : preference.length);
       reviewers.sort((a, b) => rank(a.family) - rank(b.family));
-      const chosen = reviewers.slice(0, routing.count);
+      const chosen = named ? [named] : reviewers.slice(0, routing.count);
       if (!chosen.length) {
         await step.do(`no reviewers available ${round}`, async () => objective.openInbox({ id: `review-${id}`, kind: "review", target: id, reasons: ["No independent agent reviewer is available"] }));
         break;
