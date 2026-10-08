@@ -49,7 +49,12 @@ export function defaultRoster(env: Env): Participant[] {
 /** Registers the default roster (models follow the deployment's configuration) and returns everyone. */
 export async function ensureRoster(env: Env): Promise<Participant[]> {
   const registry = registryStub(env);
-  for (const p of defaultRoster(env)) await registry.upsertParticipant(p);
+  for (const p of defaultRoster(env)) {
+    // Kind is immutable. The roster may correct a family it had misfiled; anything else is an error.
+    const prior = await registry.participant(p.id);
+    if (prior && prior.kind === p.kind && prior.family !== p.family) await registry.correctFamily(p.id, p.family);
+    await registry.upsertParticipant(p);
+  }
   return registry.participants();
 }
 
@@ -57,7 +62,13 @@ export async function ensureRoster(env: Env): Promise<Participant[]> {
 export async function syncRoster(env: Env): Promise<{ participants: number; objectives: number }> {
   const participants = await ensureRoster(env);
   const objectives = await registryStub(env).objectives();
-  for (const o of objectives) for (const p of participants) await objectiveStub(env, o.id).upsertParticipant(p);
+  for (const o of objectives) {
+    const objective = objectiveStub(env, o.id);
+    for (const p of participants) {
+      await objective.correctFamily(p.id, p.family);
+      await objective.upsertParticipant(p);
+    }
+  }
   return { participants: participants.length, objectives: objectives.length };
 }
 

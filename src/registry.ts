@@ -104,6 +104,16 @@ export class RegistryDO extends DurableObject<Env> {
     return toParticipant(this.sql.exec<Row>("SELECT * FROM participants WHERE id = ?", p.id).one());
   }
 
+  /**
+   * Lineage is a fact about the model, so a misfiled family is corrected, by the roster, with the kind
+   * untouched: Plover's gpt-oss is OpenAI's, not its host's.
+   */
+  correctFamily(id: string, family: string): Participant | null {
+    const prior = this.participant(id);
+    if (!prior || prior.family === family) return prior;
+    this.sql.exec("UPDATE participants SET family = ? WHERE id = ?", family, id);
+    return this.participant(id);
+  }
   /** Invalidates every token issued to this participant so far. */
   rotateParticipant(id: string): number {
     this.sql.exec("UPDATE participants SET rev = rev + 1 WHERE id = ?", id);

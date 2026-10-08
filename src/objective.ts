@@ -199,6 +199,14 @@ export class ObjectiveDO extends DurableObject<Env> {
     return p;
   }
 
+  /** A family corrected by the roster; every contribution is routed again, since reviews weigh by family. */
+  correctFamily(id: string, family: string): void {
+    const prior = this.participant(id);
+    if (!prior || prior.family === family) return;
+    this.sql.exec("UPDATE participants SET family = ? WHERE id = ?", family, id);
+    for (const c of this.contributions()) this.reroute(c.id);
+  }
+
   participants(): Participant[] {
     return this.sql.exec<Row>("SELECT * FROM participants ORDER BY kind DESC, id").toArray().map((r) => ({
       id: String(r.id), kind: String(r.kind) as ParticipantKind, name: String(r.name), family: String(r.family), model: String(r.model), harness: String(r.harness),
