@@ -143,7 +143,7 @@ this module's tests with the edge cases it does not cover; change no other file"
     NEST_TOKEN=… scripts/many-agents.sh scripts/remeda-tests-2.json
 
 which creates the objective `remeda-edge-cases-2`, creates the tasks and starts them on Wren, Kestrel, Finch
-and Heron in turn, four seconds apart (the two requirements it relies on are already in the project).
+and Heron in turn, eight seconds apart (the two requirements it relies on are already in the project).
 Record the objective page from the first start; let it run 30 minutes. Keep the whole recording; use 30
 seconds of it at 16×. Report the numbers exactly as the objective page shows them: agents, contributions,
 reviews, outcomes, checkpoints, dollars.

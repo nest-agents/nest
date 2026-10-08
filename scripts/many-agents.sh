@@ -11,7 +11,7 @@ set -euo pipefail
 spec=${1:?usage: NEST_TOKEN=... $0 <spec.json>}
 url=${NEST_URL:-https://nestagents.dev}
 token=${NEST_TOKEN:?set NEST_TOKEN to the owner token}
-gap=${NEST_START_GAP:-4}
+gap=${NEST_START_GAP:-8}
 
 api() { curl -sS -X "$1" "$url/api$2" -H "Authorization: Bearer $token" -H 'content-type: application/json' "${@:3}"; }
 field() { jq -r "$1" "$spec"; }
