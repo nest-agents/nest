@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Act 5: an outside agent (Codex on this laptop) joins Nest through MCP as the participant the UI just
 # invited. Recorded with asciinema; tokens are scrubbed from the cast before it is rendered.
+#
+# Codex runs here with approvals and its sandbox off, so that its git clone and push reach the network
+# without a prompt on camera. That means everything it reads through MCP (task briefs, context, the fork)
+# can steer a process with full access to this machine. Run it only against a Nest whose content you wrote,
+# in a throwaway directory, as it was here; it is a recording aid, not part of the product.
 set -euo pipefail
 DIR=${VIDEO_DIR:-$(pwd)}
 TOK=$(cat "$DIR/act5.token")
