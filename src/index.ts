@@ -192,7 +192,15 @@ async function projectApi(request: Request, env: Env, p: Principal, projectId: s
   }
   if (route === "POST /bootstrap") {
     require(p, "owner");
-    return json(await bootstrapProject(env, projectId, 10));
+    try {
+      return json(await bootstrapProject(env, projectId, 10));
+    } catch (e) {
+      if (!/^NO_CODE_YET/.test(String((e as Error)?.message))) throw e;
+      // Still empty: a fresh token to push the first commit with.
+      const token = await new ArtifactsClient(env.ARTIFACTS).token(record.repo, "write", 3600);
+      using r = await env.ARTIFACTS.get(record.repo);
+      return json({ head: null, push: { remote: (await r.info()).remote, token: token.secret, expiresAt: token.expiresAt } });
+    }
   }
   if (route === "POST /context") {
     require(p, "owner");

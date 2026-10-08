@@ -1,12 +1,23 @@
-// Nest work map: live state from the Objective Durable Object, rendered as lanes of contributions.
-// Every string from agents (titles, messages, reviews) is escaped before it reaches the DOM.
+// Nest UI: projects at /, a project's context and checks at /p/<project>, and an objective's live work
+// map at /o/<objective>. Every string from agents (titles, messages, reviews) is escaped before it
+// reaches the DOM.
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const short = (id) => String(id).replace(/^c_/, "").slice(0, 4);
 
-let S = null;            // last /api/state
+/** Which page this is. Pages are ordinary links; each load renders one view. */
+const R = (() => {
+  const o = /^\/o\/([a-z][a-z0-9-]{1,46}[a-z0-9])\/?$/.exec(location.pathname);
+  if (o) return { view: "objective", id: o[1] };
+  const p = /^\/p\/([a-z][a-z0-9-]{1,30}[a-z0-9])\/?$/.exec(location.pathname);
+  if (p) return { view: "project", id: p[1] };
+  return { view: "home", id: null };
+})();
+const BASE = R.view === "objective" ? `/api/o/${R.id}` : "";
+
+let S = null;            // last objective state
 let events = [];         // newest first
 let tab = "inbox";
 let selected = null;     // { type: "contrib" | "ctx", id }
@@ -32,7 +43,7 @@ function refreshSoon() {
 
 async function refresh() {
   try {
-    S = await api("/api/state");
+    S = await api(BASE);
     render();
   } catch (e) {
     toast(`Could not load state: ${e.message}`);
@@ -40,14 +51,14 @@ async function refresh() {
 }
 
 async function loadEvents() {
-  const list = await api(`/api/events?after=0`);
+  const list = await api(`${BASE}/events?after=0`);
   events = list.reverse();
   lastSeq = events[0]?.seq ?? 0;
 }
 
 function connect(delay = 500) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/api/live`);
+  const ws = new WebSocket(`${proto}://${location.host}${BASE}/live`);
   ws.onopen = () => {
     $("#liveChip").classList.add("on");
     $("#liveText").textContent = "Live";
@@ -89,7 +100,8 @@ const currentVersion = (item) => S?.context.find((c) => c.id === item)?.version 
 const isStale = (c) => c.status !== "accepted" && c.status !== "superseded" && c.cites.some((x) => currentVersion(x.item) > x.version);
 const reviewsOf = (id) => S.reviews.filter((r) => r.target === id && !r.triage);
 const openInbox = () => S.inbox.filter((i) => i.status === "open");
-const owner = () => S?.me === "owner";
+let me = "viewer";
+const owner = () => (S?.me ?? me) === "owner";
 
 function toast(msg) {
   const t = $("#toast");
@@ -115,8 +127,9 @@ function modal(html, onMount) {
 function render() {
   if (!S) return;
   // Asterion's one flourish: the headline ends on a blue full stop.
-  $("#objectiveTitle").innerHTML = `${esc(String(S.objective.title ?? "Objective").replace(/[.\s]+$/, ""))}<span class="blue-period">.</span>`;
-  $("#projectName").textContent = S.objective.project ? S.objective.project[0].toUpperCase() + S.objective.project.slice(1) : "Project";
+  $("#objectiveTitle").innerHTML = headline(S.objective.title ?? "Objective");
+  $("#kicker").innerHTML = `<a href="/">Projects</a> / <a href="/p/${esc(S.objective.project)}">${esc(S.project?.name ?? S.objective.project)}</a> / Objective`;
+  document.title = `${S.objective.title ?? "Objective"} · Nest`;
   $("#headVer").textContent = S.head ? String(S.head.version) : "-";
   const people = S.participants.filter((p) => p.kind === "person").length;
   $("#peopleCount").textContent = people;
@@ -126,8 +139,7 @@ function render() {
   $("#spend").textContent = `$${used.toFixed(2)}`;
   $("#spendCap").textContent = `$${cap.toFixed(0)}`;
   $("#spendBar").style.inlineSize = `${Math.min(100, (100 * used) / cap).toFixed(1)}%`;
-  $("#signInBtn").textContent = owner() ? "Signed in" : "Sign in";
-  $("#signInBtn").disabled = owner();
+  signedIn();
   renderTools();
   renderRail();
   renderMap();
@@ -164,6 +176,7 @@ function renderRail() {
   html += `<div class="group"><h3>Rejected approaches</h3>${rejected.length
     ? rejected.map((n) => `<button class="ctx" data-note="${esc(n.id)}" type="button"><span class="t">${esc(n.title)}</span><span class="v">note</span><span class="m"><span class="id">${esc(n.id)}</span></span></button>`).join("")
     : `<p class="empty-note">When you choose between approaches, the reason is kept here for every future agent.</p>`}</div>`;
+  if (owner()) html += `<div class="row"><button class="btn small" data-addctx="${esc(S.objective.project)}" type="button">Add to context</button></div>`;
   $("#ctxGroups").innerHTML = html;
   const citations = S.contributions.reduce((n, c) => n + c.cites.length, 0);
   $("#store").innerHTML = `<span>Context items</span><b>${S.context.length}</b><span>Citations tracked</span><b>${citations}</b><span>Contributions</span><b>${S.contributions.length}</b><span>Reviews</span><b>${S.reviews.filter((r) => !r.triage).length}</b>`;
@@ -384,17 +397,25 @@ function renderStream() {
 
 function reviewHtml(r) {
   const p = who(r.reviewer);
-  return `<div class="review"><div class="row"><span class="who"><span class="glyph ${p?.kind ?? "agent"}">${esc((p?.name ?? "?")[0])}</span><b>${esc(p?.name ?? r.reviewer)}</b><span>${esc(p?.kind === "agent" ? p.model : "person")}</span></span><span class="verdict">${esc({ approve: "Approved", changes: "Requested changes", block: "Blocked", comment: "Commented" }[r.verdict] ?? r.verdict)}</span></div>
+  return `<div class="review"><div class="row"><span class="who"><span class="glyph ${p?.kind ?? "agent"}">${esc((p?.name ?? "?")[0])}</span><b>${esc(p?.name ?? r.reviewer)}</b><span>${esc(p?.kind === "agent" ? p.model : "human")}</span></span><span class="verdict">${esc({ approve: "Approved", changes: "Requested changes", block: "Blocked", comment: "Commented" }[r.verdict] ?? r.verdict)}</span></div>
     <q>${esc(r.summary)}</q>${r.findings?.length ? `<ul class="reasons">${r.findings.slice(0, 5).map((f) => `<li>${esc(f.path ? `${f.path}${f.line ? `:${f.line}` : ""} ` : "")}${esc(f.text)}${f.cite ? ` <span class="id">[${esc(f.cite)}]</span>` : ""}</li>`).join("")}</ul>` : ""}
     <div class="meta">${p?.kind === "agent" ? `<span>Confidence ${Number(r.confidence).toFixed(2)}</span>` : ""}</div></div>`;
 }
 
-/** What a real browser saw after clicking Export CSV on this outcome's preview. */
+/** What a real browser saw when it opened this outcome's own preview deployment. */
 function shotHtml(c) {
-  const click = c.checks.find((k) => k.id === "export-click");
-  if (!click || click.status === "ERROR") return "";
-  return `<figure class="shot"><img src="/shots/${esc(c.id)}.png" alt="The outcome's page after a browser clicked Export CSV" loading="lazy" width="1100" height="720"><figcaption>${esc(click.detail)}</figcaption></figure>`;
+  const seen = c.checks.find((k) => k.id === "preview");
+  if (!seen || seen.status === "ERROR" || /^no deployment/.test(seen.detail)) return "";
+  return `<figure class="shot"><img src="/shots/${esc(c.id)}.png" alt="The outcome's preview deployment as a browser saw it" loading="lazy" width="1100" height="720"><figcaption>${esc(seen.detail)}</figcaption></figure>`;
 }
+
+/** The outcome's preview deployment, from the project's own configuration. */
+function previewHref(c) {
+  const pv = S.config?.preview;
+  if (!pv || !c.previewReady) return null;
+  try { return new URL(pv.path, pv.url.replace("{branch}", `cand-${c.id}`)).toString(); } catch { return null; }
+}
+const previewLink = (c) => { const h = previewHref(c); return h ? `<a class="btn small" href="${esc(h)}" target="_blank" rel="noopener">Open preview</a>` : ""; };
 
 function checksHtml(c) {
   if (!c.checks.length) return `<div class="checks"><span style="font-size:12.5px;color:var(--muted)">Checks not run yet</span></div>`;
@@ -404,7 +425,7 @@ function checksHtml(c) {
   return `<div class="checks">${c.checks.map((k) => `<span class="chk ${kind(k)}" title="${esc(k.id)}: ${says[kind(k)]}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${pass} of ${c.checks.length} checks</span></div>`;
 }
 
-const statusLabel = { composing: "Composing", ready: "Ready", waiting: "Waiting on review", incomplete: "Incomplete", failing: "Breaks a check", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
+const statusLabel = { composing: "Composing", checking: "Checking", ready: "Ready", waiting: "Waiting on review", incomplete: "Incomplete", failing: "Breaks a check", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
 
 function inboxHtml() {
   const items = openInbox();
@@ -416,7 +437,7 @@ function inboxHtml() {
       return `<div class="card ${n === 0 ? "focus" : ""}"><h4>${esc(c.name)} is ready</h4><p>All checks pass on the composed result and every contribution in it is approved.</p>${checksHtml(c)}
         <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
         ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
-        <div class="row">${owner() ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}</div></div>`;
+        <div class="row">${owner() ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${previewLink(c)}</div></div>`;
     }
     if (i.kind === "conflict") {
       const k = S.candidates.find((x) => x.id === i.target);
@@ -444,7 +465,7 @@ function outcomesHtml() {
   const head = S.head?.version ?? 0;
   const current = live.length
     ? live.map(outcomeCard).join("")
-    : `<div class="empty"><h4>Nothing to accept on checkpoint ${head}</h4><p>When contributions arrive, Nest assembles every compatible combination, merges it with real git and runs the trusted checks on the whole result.</p></div>`;
+    : `<div class="empty"><h4>Nothing to accept on checkpoint ${head}</h4><p>When contributions arrive, Nest assembles every compatible combination with real git, runs the project's own checks on the whole result and opens its preview deployment in a browser.</p></div>`;
   return `${current}${historyHtml()}`;
 }
 
@@ -471,7 +492,7 @@ function outcomeCard(c) {
     ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
-    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${c.previewReady ? `<a class="btn small" href="/preview/${esc(c.id)}/" target="_blank" rel="noopener">Open preview</a>` : ""}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`;
+    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${previewLink(c)}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}</div></div>`;
 }
 
 function inspectHtml() {
@@ -516,7 +537,200 @@ function renderRight() {
 // ---------- actions ----------
 
 async function act(fn, done) {
-  try { await fn(); if (done) toast(done); await refresh(); } catch (e) { toast(e.message); }
+  try { await fn(); if (done) toast(done); await reload(); } catch (e) { toast(e.message); }
+}
+
+/** Re-reads whatever this page shows. */
+function reload() {
+  return R.view === "objective" ? refresh() : R.view === "project" ? loadProject() : loadHome();
+}
+
+/** Asterion's one flourish: a headline ends on a blue full stop. */
+const headline = (text) => `${esc(String(text).replace(/[.\s]+$/, ""))}<span class="blue-period">.</span>`;
+
+function signedIn() {
+  $("#signInBtn").textContent = owner() ? "Signed in" : "Sign in";
+  $("#signInBtn").disabled = owner();
+}
+
+function setSpend(spend) {
+  const used = (spend?.usedMicroUsd ?? 0) / 1e6, cap = (spend?.capMicroUsd ?? 50e6) / 1e6;
+  $("#spend").textContent = `$${used.toFixed(2)}`;
+  $("#spendCap").textContent = `$${cap.toFixed(0)}`;
+  $("#spendBar").style.inlineSize = `${Math.min(100, (100 * used) / cap).toFixed(1)}%`;
+}
+
+// ---------- home: every project and its objectives ----------
+
+let H = null;
+
+async function loadHome() {
+  try { H = await api("/api/projects"); } catch (e) { toast(`Could not load projects: ${e.message}`); return; }
+  me = H.me;
+  signedIn();
+  setSpend(H.spend);
+  $("#kicker").textContent = "Nest";
+  $("#objectiveTitle").innerHTML = headline("Projects");
+  $("#lede").hidden = false;
+  $("#lede").textContent = "Each project is a git repository in Cloudflare Artifacts with its own checks. Inside it, objectives are where humans and agents work: agents build and review, humans decide what ships.";
+  const tools = owner() ? `<div class="row page-tools"><button class="btn small primary" data-act="new-project" type="button">New project</button><button class="btn small" data-act="invite" type="button">Invite a human or agent</button></div>` : "";
+  const list = H.projects.length ? H.projects.map((x) => `
+    <article class="proj">
+      <header class="proj-head">
+        <h2><a href="/p/${esc(x.id)}">${esc(x.name)}</a></h2>
+        <span class="id">${esc(x.id)}</span>
+        <span class="proj-cp">${x.head ? `Checkpoint ${x.head.version}, <span class="id">${esc(x.head.commit.slice(0, 7))}</span>` : "Waiting for its first push"}</span>
+      </header>
+      ${x.description ? `<p class="proj-desc">${esc(x.description)}</p>` : ""}
+      <ul class="objs">${x.objectives.map((o) => `<li><a href="/o/${esc(o.id)}"><span class="t">${esc(o.title)}</span><span class="id">${esc(o.id)}</span></a></li>`).join("")}
+        ${x.objectives.length ? "" : `<li class="none">No objectives yet.</li>`}</ul>
+      ${owner() && x.head ? `<div class="row"><button class="btn small" data-newobj="${esc(x.id)}" type="button">New objective</button></div>` : ""}
+    </article>`).join("")
+    : `<div class="empty"><h4>No projects yet</h4><p>${owner() ? "Create one from a public git repository, or start empty and push your code to it." : "Sign in as the owner to create the first project."}</p></div>`;
+  $("#page").innerHTML = `${tools}<section class="projects" aria-label="Projects">${list}</section>`;
+}
+
+// ---------- project: context, how it is checked, objectives and history ----------
+
+let P = null;
+let openCtx = null;
+
+async function loadProject() {
+  try { P = await api(`/api/p/${R.id}`); } catch (e) { toast(`Could not load the project: ${e.message}`); return; }
+  me = P.me;
+  signedIn();
+  api("/api/spend").then(setSpend).catch(() => undefined);
+  document.title = `${P.project.name} · Nest`;
+  $("#kicker").innerHTML = `<a href="/">Projects</a> / Project`;
+  $("#objectiveTitle").innerHTML = headline(P.project.name);
+  $("#lede").hidden = !P.project.description;
+  $("#lede").textContent = P.project.description;
+  renderProject();
+}
+
+function contextHtml() {
+  const kinds = [["requirement", "Requirements"], ["decision", "Decisions"], ["policy", "Policies"], ["evidence", "Evidence"], ["note", "Notes"]];
+  const groups = kinds.map(([kind, label]) => {
+    const items = P.context.filter((i) => i.kind === kind);
+    if (!items.length) return "";
+    return `<div class="group"><h3>${label}</h3>${items.map((i) => `
+      <div class="pctx ${openCtx === i.id ? "on" : ""}">
+        <button class="ctx" data-pctx="${esc(i.id)}" type="button" aria-expanded="${openCtx === i.id}"><span class="t">${esc(i.title)}</span><span class="v ${i.version > 1 ? "new" : ""}">v${i.version}</span><span class="m"><span class="id">${esc(i.id)}</span></span></button>
+        ${openCtx === i.id ? `<div class="pctx-body"><div class="ver"><small>Version ${i.version}, current</small>${esc(i.body)}</div>
+          ${owner() ? `<div class="field"><label for="pctx-next">Propose version ${i.version + 1}</label><textarea id="pctx-next">${esc(i.body)}</textarea></div><div class="row"><button class="btn small primary" data-pctxsave="${esc(i.id)}" type="button">Accept version ${i.version + 1}</button><span class="hint">Work that cited version ${i.version} is marked and recomposed</span></div>` : ""}</div>` : ""}
+      </div>`).join("")}</div>`;
+  }).join("");
+  const rejected = P.notes.filter((n) => n.kind === "rejected");
+  return `${groups || `<div class="empty"><h4>No context yet</h4><p>Write down what the project must do. Agents receive every requirement with a citation, reviewers judge against them, and changing one shows exactly which work relied on the old version.</p></div>`}
+    ${rejected.length ? `<div class="group"><h3>Rejected approaches</h3>${rejected.map((n) => `<div class="pctx"><div class="ctx"><span class="t">${esc(n.title)}</span><span class="v">note</span><span class="m">${esc(n.body.slice(0, 220))}${n.body.length > 220 ? "…" : ""}</span></div></div>`).join("")}</div>` : ""}
+    ${owner() && P.head ? `<div class="row"><button class="btn small" data-addctx="${esc(P.project.id)}" type="button">Add to context</button></div>` : ""}`;
+}
+
+function checksConfigHtml() {
+  if (!P.head) return "";
+  if (P.configError) return `<div class="card"><h4>The project's configuration is invalid</h4><div class="fail-line">${esc(P.configError)}</div><p>Fix <span class="id">.nest/project.json</span> through an accepted contribution.</p></div>`;
+  const c = P.config;
+  if (!c || (!c.checks.length && !c.preview && !c.setup)) return `<div class="card"><h4>How Nest checks it</h4><p>No <span class="id">.nest/project.json</span> at this checkpoint, so an outcome is checked only for a clean composition. Add one to run the project's own tests and open its preview deployment.</p></div>`;
+  return `<div class="card"><h4>How Nest checks it</h4><p>Read from <span class="id">.nest/project.json</span> at checkpoint ${P.head.version}. Every outcome runs these in a fresh container, on the whole composed tree.</p>
+    <dl class="kv">${c.setup ? `<dt>Setup</dt><dd class="id">${esc(c.setup)}</dd>` : ""}
+    ${c.checks.map((k) => `<dt>${esc(k.id)}</dt><dd class="id">${esc(k.run)}</dd>`).join("")}
+    ${c.preview ? `<dt>Preview</dt><dd class="id">${esc(c.preview.url)}${c.preview.path !== "/" ? `<br>path ${esc(c.preview.path)}` : ""}</dd>` : ""}
+    ${c.production ? `<dt>Production</dt><dd><a class="ext" href="${esc(c.production)}" target="_blank" rel="noopener">${esc(c.production.replace(/^https:\/\//, ""))}</a></dd>` : ""}
+    ${c.protected.length ? `<dt>Needs a human</dt><dd class="id">${c.protected.map(esc).join("<br>")}</dd>` : ""}</dl></div>`;
+}
+
+function renderProject() {
+  if (!P.head) {
+    $("#page").innerHTML = `<div class="empty wide"><h4>Waiting for the code</h4><p>This project's repository in Artifacts is empty. ${owner() ? "Push your code to its main branch, then check again." : "The owner pushes the first commit."}</p>
+      ${owner() ? `<div class="row"><button class="btn small primary" data-bootstrap="${esc(P.project.id)}" type="button">Check for code</button></div>` : ""}</div>`;
+    return;
+  }
+  const cps = P.checkpoints.slice().sort((a, b) => b.version - a.version);
+  $("#page").innerHTML = `<div class="proj-grid">
+    <section class="proj-main" aria-label="Context"><div class="panel-head"><h2>Context</h2><span class="aside">versioned like code</span></div><div class="proj-ctx">${contextHtml()}</div></section>
+    <aside class="proj-side">
+      <div class="card"><div class="row" style="justify-content:space-between"><h4>Objectives</h4>${owner() ? `<button class="btn small" data-newobj="${esc(P.project.id)}" type="button">New objective</button>` : ""}</div>
+        <ul class="objs">${P.objectives.map((o) => `<li><a href="/o/${esc(o.id)}"><span class="t">${esc(o.title)}</span><span class="id">${esc(o.id)}</span></a></li>`).join("") || `<li class="none">None yet. An objective is a goal with its own tasks, agents and outcomes.</li>`}</ul></div>
+      ${checksConfigHtml()}
+      <section class="history" aria-label="Checkpoint history"><h3>Checkpoints</h3><ol>${cps.map((cp) => `<li class="${cp.version === P.head.version ? "now" : ""}"><span class="v">${cp.version}</span><div><b>${esc(cp.reason)}</b><span class="meta"><span class="id">${esc(cp.commit.slice(0, 7))}</span> ${esc(timeOf(cp.createdAt))}</span></div></li>`).join("")}</ol></section>
+    </aside></div>`;
+}
+
+function newProject() {
+  modal(`<form class="form" id="np"><h3>New project</h3><p>Nest imports a public git repository into Artifacts, or creates an empty one for you to push to. Put a <span class="id">.nest/project.json</span> in it to tell Nest how to install, test and preview it.</p>
+    <div class="field"><label for="np-id">Id</label><input id="np-id" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="beacon"></div>
+    <div class="field"><label for="np-name">Name</label><input id="np-name" required placeholder="Beacon"></div>
+    <div class="field"><label for="np-desc">What it is</label><input id="np-desc" placeholder="Uptime monitor and public status page"></div>
+    <div class="field"><label for="np-url">Public git URL (optional)</label><input id="np-url" type="url" placeholder="https://github.com/you/project.git"></div>
+    <div class="row"><button class="btn small primary" type="submit">Create project</button></div></form>`, (root, close) => {
+    root.querySelector("#np").onsubmit = (e) => {
+      e.preventDefault();
+      const v = (id) => root.querySelector(id).value.trim();
+      act(async () => {
+        const url = v("#np-url");
+        const r = await api("/api/projects", { method: "POST", body: JSON.stringify({ id: v("#np-id"), name: v("#np-name"), description: v("#np-desc"), source: url ? { url } : null }) });
+        close();
+        if (r.push) modal(`<div class="form"><h3>Push your code</h3><p>The token writes to this repository only and expires at ${esc(r.push.expiresAt)}. After the push, open the project and choose Check for code.</p><pre class="diff">git remote add nest ${esc(r.push.remote)}\ngit -c http.extraHeader="Authorization: Bearer ${esc(r.push.token)}" push nest HEAD:main</pre><div class="row"><a class="btn small primary" href="/p/${esc(r.project.id)}">Open the project</a></div></div>`);
+      }, "Project created");
+    };
+  });
+}
+
+function newObjective(project) {
+  modal(`<form class="form" id="no"><h3>New objective</h3><p>A goal for this project. Agents get it, with the project's context, as the frame for every task.</p>
+    <div class="field"><label for="no-id">Id</label><input id="no-id" required pattern="[a-z][a-z0-9-]{1,46}[a-z0-9]" placeholder="${esc(project)}-incidents"></div>
+    <div class="field"><label for="no-title">Title</label><input id="no-title" required placeholder="Incidents a human can trust"></div>
+    <div class="field"><label for="no-crit">Done when (one per line, optional)</label><textarea id="no-crit"></textarea></div>
+    <div class="row"><button class="btn small primary" type="submit">Create objective</button></div></form>`, (root, close) => {
+    root.querySelector("#no").onsubmit = (e) => {
+      e.preventDefault();
+      const v = (id) => root.querySelector(id).value.trim();
+      act(async () => {
+        const o = await api(`/api/p/${project}/objectives`, { method: "POST", body: JSON.stringify({ id: v("#no-id"), title: v("#no-title"), criteria: v("#no-crit").split("\n").map((x) => x.trim()).filter(Boolean) }) });
+        close();
+        location.href = `/o/${o.id}`;
+      }, "Objective created");
+    };
+  });
+}
+
+function addContext(project) {
+  modal(`<form class="form" id="ac"><h3>Add to context</h3><p>Context is versioned like code. Agents cite what they rely on, so a later change shows exactly which work it affects.</p>
+    <div class="field"><label for="ac-kind">Kind</label><select id="ac-kind"><option value="requirement">Requirement</option><option value="decision">Decision</option><option value="evidence">Evidence</option><option value="note">Note</option></select></div>
+    <div class="field"><label for="ac-name">Short name</label><input id="ac-name" required pattern="[a-z0-9][a-z0-9-]{0,60}" placeholder="incident-rule"></div>
+    <div class="field"><label for="ac-title">Title</label><input id="ac-title" required placeholder="An incident opens after three failed checks in a row"></div>
+    <div class="field"><label for="ac-body">Text</label><textarea id="ac-body" required></textarea></div>
+    <div class="row"><button class="btn small primary" type="submit">Add version 1</button></div></form>`, (root, close) => {
+    root.querySelector("#ac").onsubmit = (e) => {
+      e.preventDefault();
+      const v = (id) => root.querySelector(id).value.trim();
+      const kind = v("#ac-kind");
+      const dir = { requirement: "req", decision: "dec", evidence: "ev", note: "note" }[kind];
+      act(async () => { await api(`/api/p/${project}/context`, { method: "POST", body: JSON.stringify({ id: `${dir}/${v("#ac-name")}`, kind, title: v("#ac-title"), body: v("#ac-body") }) }); close(); }, "Added to context");
+    };
+  });
+}
+
+function invite() {
+  modal(`<form class="form" id="iv"><h3>Invite a human or agent</h3><p>They get a token for Nest's MCP endpoint, as themselves. A human's review decides over agents'; an agent's model family keeps reviews independent. Rotating the participant revokes the token.</p>
+    <div class="field"><label for="iv-kind">Who</label><select id="iv-kind"><option value="human">A human</option><option value="agent">An agent you run</option></select></div>
+    <div class="field"><label for="iv-id">Id</label><input id="iv-id" required pattern="[a-z][a-z0-9-]{1,31}" placeholder="sam"></div>
+    <div class="field"><label for="iv-name">Name</label><input id="iv-name" required placeholder="Sam"></div>
+    <div class="field agent-only" hidden><label for="iv-family">Model family</label><input id="iv-family" placeholder="openai, anthropic, google, ..."></div>
+    <div class="field agent-only" hidden><label for="iv-model">Model</label><input id="iv-model" placeholder="the model it runs"></div>
+    <div class="row"><button class="btn small primary" type="submit">Create token</button></div></form>`, (root, close) => {
+    const kind = root.querySelector("#iv-kind");
+    kind.onchange = () => root.querySelectorAll(".agent-only").forEach((el) => (el.hidden = kind.value !== "agent"));
+    root.querySelector("#iv").onsubmit = (e) => {
+      e.preventDefault();
+      const v = (id) => root.querySelector(id).value.trim();
+      act(async () => {
+        const r = await api("/api/participants", { method: "POST", body: JSON.stringify({ id: v("#iv-id"), name: v("#iv-name"), kind: kind.value, family: v("#iv-family") || undefined, model: v("#iv-model") || undefined }) });
+        close();
+        modal(`<div class="form"><h3>${esc(r.participant.name)} can join</h3><p>Send this to them privately. It is shown once.</p><pre class="diff">MCP endpoint  ${esc(r.mcp)}\nAuthorization Bearer ${esc(r.token)}</pre></div>`);
+      }, "Token created");
+    };
+  });
 }
 
 function signIn() {
@@ -541,7 +755,7 @@ function newTask() {
     root.querySelector("#nt").onsubmit = (e) => {
       e.preventDefault();
       const v = (id) => root.querySelector(id).value.trim();
-      act(async () => { await api("/api/tasks", { method: "POST", body: JSON.stringify({ id: v("#nt-id"), title: v("#nt-title"), brief: v("#nt-brief"), alternative: v("#nt-alt") || null }) }); close(); }, "Task created");
+      act(async () => { await api(`${BASE}/tasks`, { method: "POST", body: JSON.stringify({ id: v("#nt-id"), title: v("#nt-title"), brief: v("#nt-brief"), alternative: v("#nt-alt") || null }) }); close(); }, "Task created");
     };
   });
 }
@@ -557,7 +771,7 @@ function startTask(id) {
       const participant = root.querySelector("#st-p").value;
       const person = who(participant)?.kind === "person";
       act(async () => {
-        const r = await api(`/api/tasks/${id}/start`, { method: "POST", body: JSON.stringify({ participant, mode: person ? "manual" : "agent" }) });
+        const r = await api(`${BASE}/tasks/${id}/start`, { method: "POST", body: JSON.stringify({ participant, mode: person ? "manual" : "agent" }) });
         close();
         if (person) modal(`<div class="form"><h3>Your workspace is ready</h3><p>Clone, commit with the Nest trailers, push to main, then publish. The token expires at ${esc(r.expiresAt)}.</p><pre class="diff">git clone ${esc(r.remote)} ${esc(r.repo)}\ncd ${esc(r.repo)}\n# edit, then commit ending with:\n#   Nest-Task: ${esc(id)}\n#   Nest-Attempt: ${esc(id)}/e${esc(r.epoch)}\ngit -c http.extraHeader="Authorization: Bearer ${esc(r.token)}" push origin HEAD:main</pre></div>`);
       }, "Started");
@@ -570,28 +784,39 @@ document.addEventListener("click", (e) => {
   if (!t) return;
   if (t.matches(".tab")) { tab = t.id.replace("tab-", ""); transition(renderRight); return; }
   if (t.id === "signInBtn") return signIn();
+  if (t.dataset.act === "new-project") return newProject();
+  if (t.dataset.act === "invite") return invite();
+  if (t.dataset.newobj) return newObjective(t.dataset.newobj);
+  if (t.dataset.addctx) return addContext(t.dataset.addctx);
+  if (t.dataset.bootstrap) return act(async () => { const r = await api(`/api/p/${t.dataset.bootstrap}/bootstrap`, { method: "POST", body: "{}" }); if (!r.head) throw new Error("No commit on main yet"); }, "First checkpoint created");
+  if (t.dataset.pctx) { openCtx = openCtx === t.dataset.pctx ? null : t.dataset.pctx; transition(renderProject); return; }
+  if (t.dataset.pctxsave) {
+    const body = $("#pctx-next").value;
+    return act(() => api(`/api/p/${P.project.id}/context`, { method: "POST", body: JSON.stringify({ id: t.dataset.pctxsave, body }) }), "New version accepted");
+  }
+  if (R.view !== "objective") return;
   if (t.dataset.id) { selected = { type: "contrib", id: t.dataset.id }; tab = "inspect"; render(); return; }
   if (t.dataset.ctx) { selected = { type: "ctx", id: t.dataset.ctx }; tab = "inspect"; render(); return; }
   if (t.dataset.open) { selected = { type: "contrib", id: t.dataset.open }; tab = "inspect"; render(); return; }
   if (t.dataset.cand) { selCand = t.dataset.cand; if (t.matches(".bead")) tab = "outcomes"; transition(() => { renderMap(); renderRight(); }); return; }
   if (t.dataset.bead) { tab = "outcomes"; transition(renderRight); return; }
   if (t.dataset.act === "new-task") return newTask();
-  if (t.dataset.act === "compose") return act(() => api("/api/compose", { method: "POST", body: "{}" }), "Composing outcomes");
+  if (t.dataset.act === "compose") return act(() => api(`${BASE}/compose`, { method: "POST", body: "{}" }), "Composing outcomes");
   if (t.dataset.start) return startTask(t.dataset.start);
-  if (t.dataset.pause) return act(() => api(`/api/tasks/${t.dataset.pause}/pause`, { method: "POST", body: "{}" }), "Pause requested; the agent stops at its next boundary");
+  if (t.dataset.pause) return act(() => api(`${BASE}/tasks/${t.dataset.pause}/pause`, { method: "POST", body: "{}" }), "Pause requested; the agent stops at its next boundary");
   if (t.dataset.keep) {
     const keep = t.dataset.keep;
     const others = t.dataset.among.split(",").filter((id) => id && id !== keep);
     return act(async () => {
-      for (const id of others) await api("/api/reviews", { method: "POST", body: JSON.stringify({ target: id, verdict: "block", summary: `Overlaps ${short(keep)}; the owner chose to keep ${short(keep)}.` }) });
-      await api(`/api/inbox/${t.dataset.inbox}/resolve`, { method: "POST", body: JSON.stringify({ resolution: `kept ${keep}` }) });
-      await api("/api/compose", { method: "POST", body: "{}" });
+      for (const id of others) await api(`${BASE}/reviews`, { method: "POST", body: JSON.stringify({ target: id, verdict: "block", summary: `Overlaps ${short(keep)}; the owner chose to keep ${short(keep)}.` }) });
+      await api(`${BASE}/inbox/${t.dataset.inbox}/resolve`, { method: "POST", body: JSON.stringify({ resolution: `kept ${keep}` }) });
+      await api(`${BASE}/compose`, { method: "POST", body: "{}" });
     }, `Kept ${short(keep)}; recomposing`);
   }
-  if (t.dataset.resolve) return act(() => api(`/api/inbox/${t.dataset.resolve}/resolve`, { method: "POST", body: "{}" }), "Dismissed");
+  if (t.dataset.resolve) return act(() => api(`${BASE}/inbox/${t.dataset.resolve}/resolve`, { method: "POST", body: "{}" }), "Dismissed");
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";
-    return act(() => api("/api/reviews", { method: "POST", body: JSON.stringify({ target: t.dataset.review, verdict: t.dataset.verdict, summary }) }), "Review recorded");
+    return act(() => api(`${BASE}/reviews`, { method: "POST", body: JSON.stringify({ target: t.dataset.review, verdict: t.dataset.verdict, summary }) }), "Review recorded");
   }
   if (t.dataset.reconcile) {
     const workers = S.participants.filter((p) => p.kind === "agent" && ["codex", "nest-agent"].includes(p.harness));
@@ -601,7 +826,7 @@ document.addEventListener("click", (e) => {
       root.querySelector("#rc").onsubmit = (ev) => {
         ev.preventDefault();
         const participant = root.querySelector("#rc-who").value;
-        act(async () => { await api(`/api/candidates/${t.dataset.reconcile}/reconcile`, { method: "POST", body: JSON.stringify({ participant }) }); close(); }, "Reconciling");
+        act(async () => { await api(`${BASE}/candidates/${t.dataset.reconcile}/reconcile`, { method: "POST", body: JSON.stringify({ participant }) }); close(); }, "Reconciling");
       };
     });
   }
@@ -624,15 +849,15 @@ document.addEventListener("click", (e) => {
           ev.preventDefault();
           const reason = root.querySelector("#cr-why")?.value ?? null;
           const contextReview = root.querySelector("#cr-t")?.value ?? null;
-          act(async () => { await api(`/api/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version, contextReview, reason }) }); close(); }, "Accepted");
+          act(async () => { await api(`${BASE}/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version, contextReview, reason }) }); close(); }, "Accepted");
         };
       });
     }
-    return act(() => api(`/api/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version }) }), "Accepted");
+    return act(() => api(`${BASE}/candidates/${c.id}/accept`, { method: "POST", body: JSON.stringify({ expectedVersion: S.head.version }) }), "Accepted");
   }
   if (t.dataset.ctxchange) {
     const body = $("#ctx-next").value;
-    return act(() => api("/api/context", { method: "POST", body: JSON.stringify({ id: t.dataset.ctxchange, body }) }), "New version accepted");
+    return act(() => api(`/api/p/${S.objective.project}/context`, { method: "POST", body: JSON.stringify({ id: t.dataset.ctxchange, body }) }), "New version accepted");
   }
 });
 
@@ -665,7 +890,14 @@ $("#ctxGroups").addEventListener("pointerleave", () => { hoverCtx = null; if (S)
 $("#ctxSearch").addEventListener("input", () => S && renderRail());
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => S && renderMap(), 120); });
 
-await refresh();
-await loadEvents().catch(() => undefined);
-renderStream();
-connect();
+document.body.dataset.view = R.view;
+$("#page").hidden = R.view === "objective";
+$("#shell").hidden = R.view !== "objective";
+if (R.view === "objective") {
+  await refresh();
+  await loadEvents().catch(() => undefined);
+  renderStream();
+  connect();
+} else {
+  await reload();
+}

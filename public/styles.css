@@ -90,6 +90,43 @@
   .panel-head h2 .num::after { content: " /"; color: var(--faint); }
   .panel-head .aside { margin-left: auto; color: var(--muted); }
   .decisions-head { padding-bottom: 6px; }
+
+  /* Header facts that belong to an objective stay off the other pages. */
+  body:not([data-view="objective"]) .obj-only { display: none; }
+  .objective .kicker a { color: var(--text); border-bottom: 1px solid var(--line-strong); transition: color .2s ease, border-color .2s ease; }
+  .objective .kicker a:hover { color: var(--signal); border-color: var(--signal); }
+  .lede { margin-top: 1.1rem; max-width: 62ch; font-size: 17px; line-height: 1.45; letter-spacing: -.01em; color: var(--muted); }
+
+  /* Home and project pages: one ruled column of projects; a project is its context beside its facts. */
+  .page { padding-block: 0 3rem; }
+  .page-tools { padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .projects { display: grid; }
+  .proj { display: grid; gap: 12px; padding: 26px 0; border-bottom: 1px solid var(--line); }
+  .proj-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; }
+  .proj-head h2 { font-size: clamp(1.6rem, 3vw, 2.4rem); line-height: 1.05; letter-spacing: -.045em; }
+  .proj-head h2 a { transition: color .2s ease; }
+  .proj-head h2 a:hover { color: var(--signal); }
+  .proj-head .id { color: var(--muted); }
+  .proj-cp { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .proj-desc { max-width: 62ch; color: var(--muted); font-size: 15px; }
+  .objs { list-style: none; display: grid; }
+  .objs li { border-top: 1px solid var(--line); }
+  .objs li a { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; }
+  .objs li a .t { font-size: 16px; letter-spacing: -.015em; transition: color .2s ease; }
+  .objs li a .id { margin-left: auto; color: var(--faint); }
+  .objs li a:hover .t { color: var(--signal); }
+  .objs li.none { padding: 10px 0; font-size: 13.5px; color: var(--faint); }
+  .proj-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 0 40px; }
+  .proj-main { min-width: 0; }
+  .proj-side { border-left: 1px solid var(--line); padding-left: 24px; min-width: 0; }
+  .proj-side .card:first-child { padding-top: 18px; }
+  .proj-ctx { display: grid; gap: 22px; max-width: 760px; }
+  .pctx-body { display: grid; gap: 12px; padding: 4px 0 16px; }
+  .pctx-body .ver { white-space: pre-wrap; font-size: 14px; line-height: 1.55; }
+  .pctx.on .ctx .t { color: var(--signal); }
+  .hint { font-size: 12.5px; color: var(--muted); }
+  .empty.wide { max-width: 62ch; padding: 30px 0; display: grid; gap: 12px; }
+  a.ext { color: var(--signal); border-bottom: 1px solid color-mix(in srgb, currentColor 40%, transparent); }
 }
 
 @layer components {
@@ -355,6 +392,11 @@
 @layer responsive {
   .right { container-type: inline-size; }
   @container (inline-size < 320px) { .kv { grid-template-columns: 1fr; } }
+  @media (max-width: 960px) {
+    .proj-grid { grid-template-columns: minmax(0, 1fr); }
+    .proj-side { border-left: 0; padding-left: 0; border-top: 1px solid var(--text); margin-top: 18px; }
+    .proj-cp { margin-left: 0; inline-size: 100%; }
+  }
   @media (max-width: 1280px) {
     .shell { grid-template-columns: minmax(0, 1fr); }
     .rail, .right, .map-panel { border: 0; padding-inline: 0; }

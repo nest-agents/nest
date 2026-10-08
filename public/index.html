@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Nest</title>
-<link rel="stylesheet" href="/styles.css?v=20261008b">
+<link rel="stylesheet" href="/styles.css?v=20261009a">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#f1f3f5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#11151b" media="(prefers-color-scheme: dark)">
@@ -15,22 +15,25 @@
   <header class="top">
     <a class="wordmark" href="/" aria-label="Nest home"><span class="wordmark-name">Nest</span><span class="wordmark-sub">Agents and humans</span></a>
     <div class="top-right">
-      <span class="stat cp" id="headChip"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8h14" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="3.6" fill="currentColor"/></svg><span>Checkpoint <b id="headVer">-</b></span></span>
-      <span class="stat"><b id="peopleCount">0</b><span id="peopleNoun">humans,</span><b id="agentCount">0</b><span>agents</span></span>
+      <span class="stat cp obj-only" id="headChip"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8h14" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="3.6" fill="currentColor"/></svg><span>Checkpoint <b id="headVer">-</b></span></span>
+      <span class="stat obj-only"><b id="peopleCount">0</b><span id="peopleNoun">humans,</span><b id="agentCount">0</b><span>agents</span></span>
       <span class="stat spend" id="spendChip" title="Model spend so far, against the cap"><span>Spend <b id="spend">$0.00</b> of <span id="spendCap">$50</span></span><span class="meter" aria-hidden="true"><span id="spendBar"></span></span></span>
-      <span class="stat live" id="liveChip"><span class="dot"></span><span id="liveText">Connecting</span></span>
+      <span class="stat live obj-only" id="liveChip"><span class="dot"></span><span id="liveText">Connecting</span></span>
       <button class="btn small" id="signInBtn" type="button">Sign in</button>
     </div>
   </header>
 
   <section class="objective" aria-labelledby="objectiveTitle">
-    <p class="kicker"><span id="projectName">Harbor</span> / Objective</p>
+    <p class="kicker" id="kicker">Nest</p>
     <h1 id="objectiveTitle">Loading</h1>
+    <p class="lede" id="lede" hidden></p>
   </section>
 
-  <main class="shell">
+  <main class="page" id="page" hidden></main>
+
+  <main class="shell" id="shell" hidden>
     <aside class="panel rail" aria-label="Context">
-      <div class="panel-head"><h2><span class="num">01</span> Context</h2><span class="aside">Versioned like code</span></div>
+      <div class="panel-head"><h2><span class="num">01</span> Context</h2><span class="aside" id="ctxAside">Versioned like code</span></div>
       <div class="rail-body">
         <input class="search" id="ctxSearch" type="search" placeholder="Search requirements and decisions" aria-label="Search context" autocomplete="off">
         <div class="store" id="store"></div>
@@ -76,6 +79,6 @@
 </div>
 <div class="toast" id="toast" hidden></div>
 <div class="scrim" id="scrim" hidden></div>
-<script src="/app.js?v=20261008b" type="module"></script>
+<script src="/app.js?v=20261009a" type="module"></script>
 </body>
 </html>
