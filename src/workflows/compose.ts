@@ -15,8 +15,8 @@ import { boundary, wrapUntrusted } from "../untrusted";
 type Params = { objective: string; reason?: string; only?: string[] };
 type Check = { id: string; status: string; detail: string };
 
-/** Probes 30 seconds apart, so a preview build gets ten minutes to appear. */
-const PREVIEW_PROBES = 20;
+/** Browser visits 30 seconds apart, so a preview build gets about eight minutes to appear. */
+const PREVIEW_PROBES = 16;
 
 export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
@@ -111,26 +111,26 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     /**
      * The project deploys every branch Nest pushes as a preview (Workers Builds does this for a Worker
-     * connected to the repository). Wait for the outcome's own deployment, then open it in a real browser.
+     * connected to the repository). A real browser opens the outcome's own deployment until it exists, and
+     * the first time it answers is the check: the page must load without errors.
      */
     const previewCheck = async (id: string): Promise<Check | null> => {
       if (!plan.config?.preview) return null;
       const url = previewUrl(plan.config, candidateBranch(id));
       if (!url) return { id: "preview", status: "ERROR", detail: `no preview URL for branch ${candidateBranch(id)}` };
-      let answered = 0;
-      for (let i = 0; i < PREVIEW_PROBES && !answered; i++) {
+      let last = "nothing answered";
+      for (let i = 0; i < PREVIEW_PROBES; i++) {
         if (i) await step.sleep(`preview ${id}: wait ${i}`, "30 seconds");
-        answered = await step.do(`preview ${id}: probe ${i}`, async () => {
-          const r = await fetch(url, { redirect: "manual", headers: { "user-agent": "Nest preview probe" } }).catch(() => null);
-          return r && r.status < 400 ? r.status : 0;
+        const seen = await step.do(`preview ${id}: open ${i}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
+          const r = await smokeCheck(env, url);
+          const deployed = r.httpStatus > 0 && r.httpStatus < 400;
+          if (deployed && r.screenshot) await env.OBJECTS.put(`shots/${id}.png`, r.screenshot, { httpMetadata: { contentType: "image/png" } });
+          return { deployed, check: { id: r.check.id, status: r.check.status, detail: `${url} ${r.check.detail}` } };
         });
+        if (seen.deployed) return seen.check;
+        last = seen.check.detail;
       }
-      if (!answered) return { id: "preview", status: "FAIL", detail: `no deployment answered at ${url} within ${PREVIEW_PROBES / 2} minutes of the push` };
-      return step.do(`preview ${id}: open in a browser`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "3 minutes" }, async () => {
-        const r = await smokeCheck(env, url);
-        if (r.screenshot) await env.OBJECTS.put(`shots/${id}.png`, r.screenshot, { httpMetadata: { contentType: "image/png" } });
-        return { id: r.check.id, status: r.check.status, detail: `${url} ${r.check.detail}` };
-      });
+      return { id: "preview", status: "FAIL", detail: `no deployment answered within ${PREVIEW_PROBES / 2} minutes of the push; last: ${last}`.slice(0, 600) };
     };
 
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is

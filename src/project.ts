@@ -138,7 +138,7 @@ export class ProjectDO extends DurableObject<Env> {
       this.sql.exec(
         "INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
         again.version + 1, `cp-${again.version + 1}`, again.commit, contextDigest, policyDigest,
-        `Accepted ${item.id} version ${item.version}`, now,
+        previous ? `Accepted ${item.id} version ${item.version}` : `Added ${item.id}`, now,
       );
     });
     return { checkpoint: this.head()!, previous };

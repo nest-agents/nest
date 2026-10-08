@@ -1,6 +1,7 @@
 // A real browser (Browser Rendering) opens a candidate's preview deployment the way a human would: it
 // loads the page, waits for the network to settle, and records the HTTP status, uncaught page errors and
 // console errors, plus a screenshot for the outcome card. It judges only what the browser observed.
+// It is also how Nest waits for a preview to exist: a Worker's own fetch cannot reach Preview hostnames.
 
 import puppeteer, { type Page } from "@cloudflare/puppeteer";
 
@@ -8,7 +9,8 @@ export type SmokeResult = { id: "preview"; status: "PASS" | "FAIL" | "ERROR"; de
 
 const MAX_ERRORS = 5;
 
-export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Promise<{ check: SmokeResult; screenshot: Uint8Array | null }> {
+/** `httpStatus` is what the page answered, or 0 when nothing answered; under 400 means the deployment exists. */
+export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Promise<{ check: SmokeResult; screenshot: Uint8Array | null; httpStatus: number }> {
   const result = (status: SmokeResult["status"], detail: string): SmokeResult => ({ id: "preview", status, detail: detail.slice(0, 600) });
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
   try {
@@ -23,14 +25,14 @@ export async function smokeCheck(env: Env, url: string, timeoutMs = 25_000): Pro
     const status = response?.status() ?? 0;
     await new Promise((r) => setTimeout(r, 300));
     const screenshot = await shot(page);
-    if (status === 0 || status >= 400) return { check: result("FAIL", `the preview answered HTTP ${status || "nothing"}`), screenshot };
-    if (pageErrors.length) return { check: result("FAIL", `uncaught errors on the page: ${pageErrors.join("; ")}`), screenshot };
+    if (status === 0 || status >= 400) return { check: result("FAIL", `answered HTTP ${status || "nothing"}`), screenshot, httpStatus: status };
+    if (pageErrors.length) return { check: result("FAIL", `uncaught errors on the page: ${pageErrors.join("; ")}`), screenshot, httpStatus: status };
     return {
       check: result("PASS", `loads with HTTP ${status}${consoleErrors.length ? `; console errors: ${consoleErrors.join("; ")}` : ", no errors"}`),
-      screenshot,
+      screenshot, httpStatus: status,
     };
   } catch (e) {
-    return { check: result("ERROR", `browser: ${String((e as Error)?.message ?? e)}`), screenshot: null };
+    return { check: result("ERROR", `browser: ${String((e as Error)?.message ?? e)}`), screenshot: null, httpStatus: 0 };
   } finally {
     await browser?.close().catch(() => undefined);
   }
