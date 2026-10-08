@@ -109,7 +109,15 @@ export class ObjectiveDO extends DurableObject<Env> {
     return this.sql
       .exec<Row>("SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?", after, Math.min(limit, 1000))
       .toArray()
-      .map((r) => ({ seq: Number(r.seq), at: String(r.at), svc: String(r.svc), kind: String(r.kind), text: String(r.text), data: r.data === null ? null : String(r.data) }));
+      .map(rowToEvent);
+  }
+
+  /** The most recent events, oldest first. */
+  recentEvents(limit = 200): NestEvent[] {
+    return this.sql
+      .exec<Row>("SELECT * FROM (SELECT * FROM events ORDER BY seq DESC LIMIT ?) ORDER BY seq", Math.min(limit, 1000))
+      .toArray()
+      .map(rowToEvent);
   }
 
   /** Public log entry for work done elsewhere (workflows, sandboxes, gateway). */
@@ -516,6 +524,8 @@ export class ObjectiveDO extends DurableObject<Env> {
     } else if (routing.state === "approved" || routing.state === "changes" || routing.state === "blocked") {
       this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = ? WHERE id = ? AND status = 'open'", routing.state, inboxId);
     }
+    // A replacement that is approved answers every open question about the work it replaces.
+    if (status === "approved" && c.supersedes) this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'replaced' WHERE target = ? AND status = 'open'", c.supersedes);
     if (status !== c.status) this.promoteOutcomes(contributionId);
     return routing;
   }
@@ -669,6 +679,21 @@ export class ObjectiveDO extends DurableObject<Env> {
       const by = all.find((y) => y.id === owner.get(clash))!;
       retire(x, `Checkpoint ${checkpoint.version} already has ${clash} from ${this.participant(by.author)?.name ?? by.author}'s ${by.title}`);
     }
+    // Work built on retired work can never apply either. Work built on replaced work is not retired: the
+    // planner carries it onto the replacement.
+    for (let changed = true; changed;) {
+      changed = false;
+      const now = this.contributions();
+      const retired = new Set(now.filter((x) => x.status === "superseded" && x.flags.some((f) => /was not chosen|already has|was retired/.test(f))).map((x) => x.id));
+      for (const x of now) {
+        if (["accepted", "superseded", "blocked"].includes(x.status)) continue;
+        const base = x.requires.find((d) => retired.has(d));
+        if (!base) continue;
+        const b = now.find((y) => y.id === base)!;
+        retire(x, `It builds on ${b.title}, which was retired at checkpoint ${checkpoint.version}`);
+        changed = true;
+      }
+    }
     // Ready and conflict questions about outcomes that can no longer be accepted go too.
     this.sql.exec("UPDATE inbox SET status = 'resolved', resolution = 'superseded' WHERE status = 'open' AND kind IN ('accept', 'conflict') AND target IN (SELECT id FROM candidates WHERE status = 'superseded')");
   }
@@ -692,6 +717,10 @@ export class ObjectiveDO extends DurableObject<Env> {
       lastSeq: this.lastSeq(),
     };
   }
+}
+
+function rowToEvent(r: Row): NestEvent {
+  return { seq: Number(r.seq), at: String(r.at), svc: String(r.svc), kind: String(r.kind), text: String(r.text), data: r.data === null ? null : String(r.data) };
 }
 
 function rowToTask(r: Row): Task {

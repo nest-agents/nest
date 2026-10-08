@@ -51,7 +51,7 @@ async function refresh() {
 }
 
 async function loadEvents() {
-  const list = await api(`${BASE}/events?after=0`);
+  const list = await api(`${BASE}/events?tail=200`);
   events = list.reverse();
   lastSeq = events[0]?.seq ?? 0;
 }

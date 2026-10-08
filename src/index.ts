@@ -246,7 +246,10 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     if (request.headers.get("upgrade") !== "websocket") throw new HttpError(426, "WEBSOCKET_REQUIRED");
     return objective.fetch(request);
   }
-  if (route === "GET /events") return json(await objective.events(Number(url.searchParams.get("after") ?? 0)));
+  if (route === "GET /events") {
+    const tail = url.searchParams.get("tail");
+    return json(tail ? await objective.recentEvents(Number(tail) || 200) : await objective.events(Number(url.searchParams.get("after") ?? 0)));
+  }
 
   if (route === "POST /tasks") {
     require(p, "owner");

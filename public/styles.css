@@ -91,8 +91,6 @@
   .panel-head .aside { margin-left: auto; color: var(--muted); }
   .decisions-head { padding-bottom: 6px; }
 
-  /* Header facts that belong to an objective stay off the other pages. */
-  body:not([data-view="objective"]) .obj-only { display: none; }
   .objective .kicker a { color: var(--text); border-bottom: 1px solid var(--line-strong); transition: color .2s ease, border-color .2s ease; }
   .objective .kicker a:hover { color: var(--signal); border-color: var(--signal); }
   .lede { margin-top: 1.1rem; max-width: 62ch; font-size: 17px; line-height: 1.45; letter-spacing: -.01em; color: var(--muted); }
@@ -390,6 +388,8 @@
 }
 
 @layer responsive {
+  /* Header facts that belong to an objective stay off the other pages (last layer, so it beats .stat). */
+  body:not([data-view="objective"]) .obj-only { display: none; }
   .right { container-type: inline-size; }
   @container (inline-size < 320px) { .kv { grid-template-columns: 1fr; } }
   @media (max-width: 960px) {
