@@ -34,6 +34,15 @@ export const gatewayBase = (env: Env) => `https://gateway.ai.cloudflare.com/v1/$
  * Where a provider request really goes. Agents and reviewers always address the gateway; in "direct"
  * mode (before the gateway exists) the same path is sent straight to the provider.
  */
+/**
+ * The gateway is authenticated, so provider requests through it carry its token (a secret scoped to AI
+ * Gateway: Run on this account). Workers AI calls through the binding are authenticated automatically.
+ */
+export function gatewayHeaders(env: Env): Record<string, string> {
+  const token = (env as unknown as { CF_AIG_TOKEN?: string }).CF_AIG_TOKEN;
+  return (env.AI_GATEWAY_MODE as string) === "gateway" && token ? { "cf-aig-authorization": `Bearer ${token}` } : {};
+}
+
 export function providerTarget(env: Env, provider: string, rest: string): string | null {
   if ((env.AI_GATEWAY_MODE as string) === "gateway") return `${gatewayBase(env)}/${provider}/${rest}`;
   if (provider === "openai") return `https://api.openai.com/v1/${rest.replace(/^v1\//, "")}`;
@@ -78,6 +87,7 @@ export async function chat(
       authorization: `Bearer ${key}`,
       "content-type": "application/json",
       "cf-aig-metadata": JSON.stringify(opts.metadata ?? {}),
+      ...gatewayHeaders(env),
     },
     body: JSON.stringify({
       model: route.model,

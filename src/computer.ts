@@ -7,7 +7,7 @@ import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
 import { candidateBranch, contextRepo, objectiveStub, parseWorkspaceRepo, projectRepo } from "./names";
-import { estimateCost, isPriced, priceFor, providerTarget } from "./models";
+import { estimateCost, gatewayHeaders, isPriced, priceFor, providerTarget } from "./models";
 import { receivePackRefs } from "./gitproto";
 
 /**
@@ -410,6 +410,8 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     headers.delete("x-api-key");
     if (key) headers.set("authorization", `Bearer ${key}`);
     headers.set("cf-aig-metadata", JSON.stringify({ objective: props.objective, task: props.task ?? "-", computer: props.computer }));
+    headers.delete("cf-aig-authorization");
+    for (const [k, v] of Object.entries(gatewayHeaders(this.env))) headers.set(k, v);
     headers.delete("host");
     headers.set("content-type", "application/json");
     const upstream = await fetch(new Request(target, { method: "POST", headers, body: bodyText }));
