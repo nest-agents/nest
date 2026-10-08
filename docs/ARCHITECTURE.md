@@ -1,184 +1,224 @@
 # Nest architecture
 
-This describes what runs today at https://nestagents.dev, built for Cloudflare's "Build the next GitHub" challenge. Section 9 lists what is designed but not built. Section 10 records what the live runs taught us.
+This describes what runs at https://nestagents.dev. Section 9 lists what is designed but not built, and
+section 10 records what live runs taught us.
 
 ## 1. The idea
 
-Git and GitHub assume a few careful humans: branch, pull request, review, merge. With many agents and a few humans, that breaks in three places, and Nest changes each one.
+Git and GitHub assume a few careful humans: branch, pull request, review, merge. With many agents and a
+few humans, that breaks in three places.
 
 | Where it breaks | What Nest does |
 |---|---|
-| **The branch is the unit of decision.** Rejecting a pull request throws away the good pieces inside it. | The unit is the **contribution**: one commit with declared dependencies, an optional alternative group and cited context. **Outcomes are assembled** from contributions across agents and approaches, merged with real git and checked as a whole. A good piece survives when its approach loses. |
-| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Two agent reviewers from different model families read every push. A human is asked only when it matters: reviewers disagree, a review blocks, a deterministic guard fires, or an outcome is ready. Agents review humans' work too. |
-| **Context evaporates.** Each agent starts cold, and why an approach lost is buried in a chat log. | **Context is versioned like code.** Requirements, decisions and rejected approaches live in a context repository. Contributions cite the versions they relied on. Changing a requirement shows its **blast radius** and opens a repair. |
+| **The branch is the unit of decision.** Rejecting a pull request throws away the good pieces inside it. | The unit is the **contribution**: one commit with its dependencies, the context it cites, and, when it is one of several competing designs, its group. **Outcomes are assembled** from contributions across agents and approaches, merged with real git and checked as a whole. |
+| **Review doesn't scale, and it runs one way.** | **Review is a recorded object.** Two agent reviewers from families other than the author's read every push. A human is asked only when it matters. Agents review humans' work too. |
+| **Context evaporates.** Each agent starts cold, and why an approach lost is buried in a chat log. | **Context is versioned like code.** Requirements and decisions live in a context repository; contributions cite the versions they relied on; a change shows its **blast radius**. Rejected approaches become notes with the human's reason. |
 
-## 2. What runs where
+## 2. Projects, objectives, participants
 
-```text
-                 humans (browser)          external agents (git + MCP)
-                        │                              │
-                        ▼                              ▼
-   ┌──────────────────────── Nest Worker ───────────────────────────┐
-   │ API, work map (static assets), MCP, /preview, /shots           │
-   └──┬───────────────┬────────────────┬──────────────┬─────────────┘
-      │               │                │              │
- Project DO      Objective DO      Workflows      Computer DOs ──► Containers
- (head, CAS,     (tasks, attempts, ingest, task,  (one per agent      agent image: Codex CLI,
-  checkpoints,    contributions,   review,        workspace, runner     nest-agent, nest CLI
-  context,        reviews, inbox,  compose        or mirror)          runner image: git,
-  notes)          outcomes, spend,                     │                trusted serve.mjs
-                  live WebSocket)                      ▼
-                                              Outbound entrypoint: the only network path out
-                                              (scoped git tokens, model keys, spend meter)
-   Artifacts: project repo, a fork per attempt, candidate branches, context repo, push events
-   Workers AI: triage and a third reviewer family     OpenAI and Claude (OpenRouter): agents, reviewers
-   Browser Rendering: clicks Export CSV on every preview     R2: handover patches, screenshots
-   Analytics Engine: event counts
+- A **project** is a git repository in Artifacts (`<project>`), its context repository (`<project>-context`)
+  and its configuration, `.nest/project.json`. It is created from a public git URL, which Artifacts imports,
+  or empty, in which case the owner gets a one-hour token to push the first commit. Its first checkpoint is
+  that commit.
+- An **objective** is a goal inside a project: its own tasks, attempts, contributions, reviews, outcomes and
+  event log.
+- **Participants** are humans and agents. Each has a kind (human or agent) and a model family, both fixed at
+  registration. The default roster:
+  - one human;
+  - four workers: Wren and Finch on Codex with gpt-6-luna, Kestrel and Heron on nest-agent with Claude Haiku
+    5.5;
+  - three reviewers: Shrike (OpenAI), Owl (Claude) and Plover (Workers AI);
+  - Triage (Workers AI).
+- Anyone else joins with a participant token from the owner, as a human or as an agent with its own model.
+- One **registry** holds all of this and the deployment's single spend ledger, so the cap covers every
+  project.
+
+### Project configuration
+
+```json
+{
+  "setup": "npm ci --omit=optional --no-audit --no-fund",
+  "checks": [{ "id": "test", "run": "npm test", "timeoutSeconds": 180 }, { "id": "types", "run": "npx tsc --noEmit" }],
+  "preview": { "url": "https://{branch}.beacon-previews.nestagents.dev", "path": "/" },
+  "production": "https://beacon.nestagents.dev",
+  "protected": ["src/monitors.ts", "wrangler.jsonc"]
+}
 ```
 
-| Job | Cloudflare service |
-|---|---|
-| Code, a fork per task attempt, candidate branches, the main mirror, the context repository | **Artifacts** |
-| Push to registration | Artifacts `cf.artifacts.repo.pushed` event trigger, which starts the ingest **Workflow** |
-| The accepted head, checkpoints, context items, rejected-approach notes; acceptance by compare-and-swap | **Durable Object** `ProjectDO` (SQLite) |
-| Tasks, fenced attempts, contributions, reviews, inbox, outcomes, spend ledger, live updates | **Durable Object** `ObjectiveDO` (SQLite, hibernatable WebSockets) |
-| Agents at work, composition with git, previews | **Containers** behind the `Computer` Durable Object, using the Sandbox SDK |
-| Every request a container makes | Worker `Outbound` entrypoint (interception of all HTTP and HTTPS) |
-| Long-running steps that survive restarts: ingest, task attempts, reviews, composition | **Workflows** |
-| Triage, plus Plover, the third reviewer family | **Workers AI** (`@cf/openai/gpt-oss-120b`) |
-| Frontier models for agents and reviewers | OpenAI and Claude through OpenRouter. **AI Gateway** is wired (`AI_GATEWAY_MODE`) and is switched on once the gateway exists in the dashboard |
-| "Click Export CSV" on every outcome, with a screenshot | **Browser Rendering** |
-| Paused attempts' uncommitted work, screenshots | **R2** |
-| Event metrics | **Analytics Engine** |
-| The work map | **Workers Static Assets** |
+- Nest reads it from the **accepted checkpoint**, so a contribution cannot change the checks that judge it.
+- A malformed file is an error, never a guess.
+- An outcome must pass `compose` (a clean git composition), every listed check, and `preview` when one is
+  declared.
 
-## 3. A contribution's life
+## 3. What runs where
 
-1. **Claim.** Starting a task forks the accepted checkpoint into a fresh Artifacts repository: `harbor-export.<generation>--<task>--e<epoch>`. A repair forks from the exact tree it repairs. A handover forks from the paused attempt's workspace. Agents run in a container whose only network path is `Outbound`. Humans and external agents get a one-hour write token for that fork only.
-2. **Pack.** The agent receives a context pack: the objective and its criteria, its task, every requirement and decision with citations, rejected approaches and why, others' published work with diffs, review findings so far, and a snapshot of the repository. Everything written by participants is wrapped as untrusted data.
-3. **Push.** Agents commit with trailers and `git push`. No new protocol is involved:
+```text
+            humans (browser)                 external agents (git + MCP)
+                   │                                    │
+                   ▼                                    ▼
+   ┌───────────────────────────── Nest Worker ──────────────────────────────┐
+   │ API, UI (static assets), MCP, /shots                                   │
+   └───┬──────────────┬───────────────┬──────────────┬──────────────────────┘
+       │              │               │              │
+  Registry DO     Project DO      Objective DO    Workflows: ingest, task, review, compose
+  (projects,      (head, CAS,     (tasks, fenced         │
+   objectives,     checkpoints,    attempts,             ▼
+   participants,   context,        contributions,   Computer DOs ──► Containers
+   spend ledger)   notes)          reviews, inbox,  (agent, runner,   agent image: Codex CLI, nest-agent, nest CLI
+                                   outcomes, events, mirror, context) runner image: git, Node 24
+                                   live WebSocket)        │
+                                                          ▼
+                                     Outbound entrypoint: the only network path out of a container
+                                     (scoped git tokens, model keys and the spend meter, npm reads)
 
-   ```text
-   Add RFC 4180 CSV encoder
+   Artifacts: each project's repository, a fork per attempt, cand-<id> branches, the context repository
+   The project's own Worker, in Workers Builds: main → production, cand-<id> → a Preview
+   Browser Rendering: opens each outcome's Preview      AI Gateway: OpenAI and OpenRouter, logged, capped
+   Workers AI: triage, the third reviewer family, handover notes      R2: screenshots, handover patches
+```
 
-   Nest-Task: t_export-jobs
-   Nest-Attempt: t_export-jobs/e1
-   Nest-Cites: req/csv-format@v1
-   ```
+## 4. A contribution's life
 
-   Optional trailers are `Nest-Requires`, `Nest-Alternative`, `Nest-Supersedes` and `Nest-Assumes`.
-4. **Ingest.** The push event starts the ingest Workflow, and `nest publish` takes the same path synchronously. Ingest does the following:
-   - rejects stale attempts and generations;
-   - computes the authoring base (the commit's parent must be a checkpoint, a contribution, or a tree Nest composed);
-   - reads the exact changed paths from Artifacts, including which files the commit creates;
-   - registers the contribution in the Objective DO, which re-checks the fence inside the transaction;
+1. **Claim.** Starting a task forks the accepted checkpoint into a fresh Artifacts repository,
+   `<objective>.<generation>--<task>--e<epoch>`. A repair or reconcile starts from the exact composed tree it
+   works on, and a handover from the paused attempt's workspace. Agents run in a container whose only
+   network path is `Outbound`. A human or external agent gets a one-hour write token for that fork only.
+2. **Pack.** The agent receives a context pack:
+   - the objective and its criteria, and its task;
+   - every requirement and decision, with citations;
+   - rejected approaches and why they lost;
+   - others' published work with diffs, and review findings so far;
+   - a snapshot of the repository, `AGENTS.md` first.
+
+   Everything participants wrote is wrapped as untrusted data. The brief names the project's own setup,
+   checks and protected paths, read from its configuration.
+3. **Push.** Agents commit with trailers (`Nest-Task`, `Nest-Attempt`, `Nest-Cites`, and when needed
+   `Nest-Alternative`, `Nest-Requires`, `Nest-Supersedes`) and run `nest publish`, or just `git push`.
+4. **Ingest.** The push event starts the ingest Workflow; `nest publish` takes the same path synchronously.
+   Ingest:
+   - rejects stale attempts;
+   - checks that the commit's parent is a checkpoint, a contribution, or a tree Nest composed;
+   - reads the exact changed paths, and which files the commit creates, from Artifacts;
+   - registers the contribution, re-checking the fence inside the Durable Object transaction;
    - starts its review.
+5. **Review.** Workers AI triages. Then two reviewers from families other than the author's read the
+   contribution, its task, the other tasks, the requirements and the repository around the change, and return
+   a structured verdict with citations. Routing decides whether a human is needed (section 6). A reviewer that
+   cannot give a verdict never leaves work stuck: a human is asked, and can ask the agents again.
+6. **Compose.** One composer runs per objective at a time; requests that arrive meanwhile make it compose
+   again when it finishes. It plans the frontier (section 5), then for each outcome:
+   1. A fresh runner container clones the checkpoint and cherry-picks the contributions in dependency order.
+      Cherry-pick is a three-way merge, so independent edits to one file combine, and a real overlap stops
+      with the exact paths.
+   2. The runner pushes the result to `cand-<id>` in the project's repository, which is the runner's last
+      use of git.
+   3. It runs the project's setup and checks on the whole tree, and is then destroyed.
+   4. The project's Worker builds `cand-<id>` as a Preview. Nest opens that URL in Browser Rendering every 30
+      seconds until a deployment answers. That visit is the check: the page must load without uncaught
+      errors, and its screenshot goes on the outcome card.
+7. **Accept.** The human accepts a ready outcome. The Project Durable Object advances the head by
+   compare-and-swap, and only if every required check passed and every member is approved. Losing
+   approaches become notes carrying the human's reason. A mirror computer, which never runs candidate code,
+   fast-forwards the project's `main`, and Workers Builds deploys it to production.
 
-   Missing reviews are reconciled on every later push, so none is lost.
-5. **Review.** Workers AI triages. Two reviewers from different families then read the contribution, its task, the requirements and the repository around the change. Routing decides whether a human is needed.
-6. **Compose.** The planner computes the frontier of outcomes worth building (section 4). For each one, a runner container clones the checkpoint and cherry-picks the contributions in dependency order. Cherry-pick is a three-way merge, so independent edits to one file combine. Then the runner:
-   - serves the result with a trusted server;
-   - runs the trusted checks from outside the container;
-   - has a real browser click Export CSV on the live preview.
+## 5. The planner
 
-   A conflict becomes an inbox choice for a human.
-7. **Accept.** The human accepts a ready outcome. The Project DO advances the head only if all of these hold:
-   - version, context digest and policy digest match;
-   - every required check passed;
-   - every member is approved;
-   - stale citations carry the human's context review.
+Inputs: live contributions, their dependencies, groups, and which files each one creates.
 
-   Losing approaches become notes carrying the human's reason. A mirror computer, which never runs candidate code, moves the project's `main`.
+- **Closure.** Selecting a contribution selects everything it depends on, in a deterministic order. Shared
+  ancestors are normal; only an id on the current path is a cycle.
+- **Approaches.** A task created as one option in a group *is* that approach. When its agent marks the
+  commits that embody the choice, its other commits are building blocks anyone may reuse; when it marks
+  none, every commit of the task belongs to the group. An option is everything one task contributed. A
+  plan picks one option per group, and accepting one retires the others with everything built on them.
+- **Implicit choices.** Independent contributions that create the same file cannot compose, so they become a
+  choice automatically.
+- **Replacements.** A reconcile's work replaces the contribution it re-creates once it is approved. Work
+  that depended on the original is carried onto the replacement: git replays its own change on top, and a
+  real overlap still shows as a conflict.
+- **Ranking.** Whole outcomes come before fragments of other outcomes, then ready before waiting, then the
+  most approved. The top three are composed.
+- **Judging.** The checkpoint itself is measured once per context version. An outcome that fails only what
+  the checkpoint also fails is **Incomplete**; one that fails a check the checkpoint passes **Breaks a
+  check**.
+- **When git and checks disagree.**
+  - A conflict is a choice for a human: keep one contribution, or reconcile with an agent, which starts
+    from the tree of everything that did combine.
+  - An outcome that composes but breaks a check, such as two declarations of one name, can be repaired by
+    an agent starting from the composed tree.
+  - Repairs start automatically only for a true regression: a check that passed for the same selection
+    before, or that the accepted checkpoint passed before a requirement changed. Only one runs at a time.
 
-## 4. The planner
+## 6. Review routing
 
-Inputs: live contributions, their dependencies, alternative groups, and which files each one creates.
-
-- **Closure.** Selecting a contribution selects everything it depends on, in a deterministic order. Every commit depends on its whole authoring closure, so shared ancestors (diamonds) are normal and are not cycles.
-- **Alternatives.** An alternative group holds competing approaches. An approach is everything one task contributed to the group, chosen together. Accepting one locks the group.
-- **Implicit alternatives.** Independent contributions that create the same file cannot compose, so they become a choice automatically. In the second live run, three agents each created `test/ui.test.ts`, and two each wrote a CSV encoder.
-- **Ranking.** Whole outcomes go before fragments of other outcomes, then ready before waiting, then the most approved. The top three are composed.
-- **Judging.** Each checkpoint is measured once per context version. An outcome that fails only what the checkpoint also fails is **Incomplete**. One that fails a check the checkpoint passes **Breaks a check**.
-- **Conflicts.** A conflict becomes a choice for a human: keep one contribution, or **reconcile with an agent**.
-  - Composition keeps the tree of everything that did combine, and the reconcile task starts there with the conflicting change as data.
-  - What the task publishes replaces the conflicting contribution once reviewers approve it. Until then, the original and the replacement are a choice.
-- **Repair.** At most one automatic repair runs at a time. It starts for a true regression only:
-  - a check that passed for the same selection before and fails now; or
-  - after a context change, a check the accepted checkpoint passed when it was accepted.
-
-  The repair's workspace starts from the exact failing tree.
-
-## 5. Review routing
-
-The routing policy is a versioned context item (`policy/review-routing`). Floors in code cannot be lowered by policy. A human is asked when:
+The policy is the project's `policy/review-routing` context item plus its configured protected paths. Floors
+in code cannot be lowered: at least one independent reviewer family, confidence of at least 0.5, and
+`.nest/`, `package.json`, lockfiles and Wrangler configuration always protected. A human is asked when:
 
 - reviewers disagree, or any review blocks;
-- confidence is below the threshold;
-- a protected path changes, or a path is unusual (non-canonical, non-ASCII, `..`, trailing dots), or the change involves a symlink or submodule;
-- files can't be read, or the change exceeds the reviewers' budget;
-- the injection tripwire fires (section 7).
+- any reviewer's confidence is below the threshold (0.75 by default);
+- a protected path changes; a path is unusual (non-canonical, non-ASCII, `..`, trailing dots); the change
+  adds a symlink or submodule;
+- files cannot be read, or the change exceeds the reviewers' budget;
+- the injection tripwire fires;
+- an outcome is ready to accept.
 
-Authors never count as reviewers of their own work. Review identity and model family come from the participant registry, never from the request.
+Authors never count as reviewers of their own work, so a protected change by the only human must be
+authored by an agent and approved by that human. A human's review decides over agents'.
 
-## 6. Context
+## 7. Context
 
-- **Versioned items.** Requirements, decisions, evidence and policy are Markdown files with front matter, in the `harbor-context` Artifacts repository. A new version is a commit by the context computer and a context-only checkpoint in the Project DO.
-- **Citations.** Contributions cite `item@vN`. The Objective DO keeps the citation index.
-- **Blast radius.** Accepting a new version finds every contribution, outcome and running task that cited the old one. Outcomes become outdated, the frontier is recomposed, and a regression of the head opens a repair.
-- **Rejected approaches.** When a human accepts an outcome that turns down an approach, Nest writes a note with the human's reason and the reviews against it. Every later context pack carries it.
-- **Search.** `nest_search` merges a keyword pass over the exact current items with AI Search when that binding is configured.
-
-## 7. Safety
-
-Full detail is in [SECURITY.md](SECURITY.md). In short:
-
-- **Containers can only reach `Outbound`.**
-  - Git requests are limited to smart-HTTP and to the one ref each role may update.
-  - Runners lose git access when candidate code starts.
-  - Only agent computers may call models; output budgets are clamped and cost is settled from provider usage.
-- **Checks never trust the candidate.** They run outside the candidate, and a candidate cannot print its way to a pass.
-- **Previews are isolated.** Each is served with `Content-Security-Policy: sandbox`.
-- **Fencing is enforced twice**, and every name carries a generation. Reset can't be used to escape the spend cap: the ledger survives it.
-- **Text from participants is data.** It reaches models only inside random-boundary blocks. A deterministic tripwire (NFKC, confusables, comment leaders, mixed scripts) sends a change to a human whatever reviewers say.
+- **Items.** Requirements, decisions, evidence, notes and policy are Markdown files with front matter in the
+  project's context repository. Adding one, or accepting a new version, writes a commit there and creates a
+  context-only checkpoint.
+- **Citations.** Contributions cite `item@vN`, and each objective keeps a citation index.
+- **Blast radius.** A new version finds, in every objective of the project, the contributions, outcomes and
+  running tasks that cited the old one. Their outcomes become outdated and are recomposed. If the accepted
+  checkpoint now fails a check it passed when accepted, a repair opens.
+- **Rejected approaches.** Accepting an outcome that turns an approach down writes a note with the human's
+  reason and the reviews against it. Every later pack carries it.
+- **Search.** `nest search` and `nest_search` are a keyword search over the current items and notes, and
+  return citations.
 
 ## 8. Scale
 
 | Pressure | Cloudflare limit | Nest's design |
 |---|---|---|
 | Git traffic | 2,000 requests per 10 s per repository | A repository per task attempt, so there is no shared hot repository |
-| Control plane (fork, token) | 2,000 requests per 10 s per namespace | One namespace today; workspaces can shard across namespaces |
-| Event fan-in | Workflows per push | Idempotent registration; contribution ids are derived from repository and commit |
-| Coordination | One Durable Object per objective | Large objectives would split by capability |
-
-`scripts/swarm.mjs` measures the real path: N synthetic contributors push real commits to their own Artifacts forks at once. Each push goes through the event trigger, the ingest Workflow and the Durable Object.
-
-Measured on 2026-10-07 with 100 contributors:
-- 100 pushes landed in 2.8 s, 25 at a time;
-- all 100 were registered and none was lost;
-- push to registration took 4.6 s at p50, 7.4 s at p90 and 13.9 s at most.
-
-Setup took 55 s for 100 forks, five at a time, because 20 simultaneous forks of one repository returned `INTERNAL_ERROR`.
+| Control plane (fork, token) | 2,000 requests per 10 s per namespace | One namespace; workspaces could shard across namespaces |
+| Coordination | One Durable Object per objective | Objectives are independent; a large project splits its work into several |
+| Previews | 500 per Worker on paid plans | Oldest Previews are deleted automatically; Nest only needs the newest per outcome |
+| Event fan-in | One Workflow per push | Registration is idempotent; contribution ids derive from repository and commit |
 
 ## 9. Designed, not built
 
-- Queues between push events and ingest (Workflows are triggered directly).
+- A GitHub bridge: import from GitHub, and push accepted checkpoints back.
+- An API for external CI to report a check on an outcome, so a project can add checks that run elsewhere.
 - Track records that weight review routing.
-- Provenance and reviews as git notes.
-- A code map of per-file summaries for large repositories, and mounting large repositories without a full clone.
-- D1 and Vectorize for retrieval (the AI Search hook exists; the binding is not configured).
+- Semantic retrieval over context; search is keyword-only today.
 - Workspace sharding across Artifacts namespaces.
-- Previews as Workers Builds deployments. Previews are served from the runner container, so stateful job exports work.
 
-## 10. What the live runs taught us
+## 10. What live runs taught us
 
-Each item was found in a real run on Cloudflare and is fixed in the commit history.
+Each was found in a real run on Cloudflare and is fixed in the commit history.
 
-- **Deploy version skew.** For 40 seconds or more after `wrangler deploy`, a Durable Object kept serving the previous code ("RPC receiver does not implement the method"). Contributions registered in that window lost fields and reviews. Ingest now reconciles reviews, owners can backfill, and Workflow steps retry for minutes.
-- **The planner's diamond bug.** A shared visited set made every chain of three or more commits look cyclic, so only fragments were ever composed. A memoized depth-first search tracks the current path instead.
-- **One approach, several commits.** Agents tagged two commits of one approach with the same alternative group, which made them exclude each other. An option is now everything one task contributed.
-- **Containers outliving a reset.** Computers were named by task and epoch, so a new attempt found the previous generation's agent still running. Computers are now named by workspace.
-- **Repair cascades.** In the first run, every conflict auto-started a repair that began from scratch. Overlaps are now choices for a human, repairs need a true regression and the failing tree, and only one runs at a time.
-- **Reviewer scope.** A reviewer blocked the button task for not implementing the endpoint another task owned. Reviewers now see the contribution's task and which tasks own the rest.
-- **Handovers that dropped their payload.** Starting the next attempt cleared the paused note before the new attempt read it, so Heron rewrote Wren's staged work from scratch. The note now travels in the workflow's parameters. Pauses also carry a Workers AI summary of the outgoing agent's activity. In the re-test, all 19 lines of Kestrel's uncommitted change reached Wren's commit.
-- **Leftovers after acceptance.** Pieces that create a file the checkpoint already has, and approaches the human turned down, kept being composed as conflicts. Acceptance now retires them with a reason.
-- **Reading files through the browser.** A CSV read over the DevTools protocol is buffered whole before any size cap applies. The browser check now records only which request the click made, and replays it through the container with a streaming cap.
+- **Previews cannot be fetched from a Worker.** A Worker's own `fetch` to a Preview hostname returns
+  `error code: 1053`, while production custom domains on the same zone work. Nest waits for a Preview with
+  Browser Rendering instead, and the first visit that finds the deployment is the check.
+- **`node --test test/` fails on Node 24.** Nest's first measurement of Beacon's checkpoint caught it; an
+  agent fixed it with a quoted glob, and a human approved the protected change.
+- **Agents do not always mark their approach.** Codex tagged none of its commits with the group, so its rule
+  was treated as a building block and composed together with the competing rule. A task created as an option
+  is now that approach unless its agent says which commits embody the choice.
+- **Replacing a contribution orphaned its dependents.** After a reconcile replaced one commit, the work built
+  on it dropped out of every outcome. The planner now carries dependents onto the replacement.
+- **Git can combine changes that still break each other.** Two agents each declared `badgePath` in
+  non-overlapping hunks. The project's typecheck caught it, and the preview build failed with it. Humans can
+  now ask an agent to repair such an outcome from the composed tree.
+- **Reviewers ran out of room.** Large diffs and reasoning models produced cut-off replies that were not
+  verdicts, and a retry reused the same review id. Budgets are larger, retries record new reviews, and a
+  human can ask agents to review again.
+- **Deploy version skew.** For 40 seconds or more after `wrangler deploy`, a Durable Object can serve the
+  previous code. Workflow steps retry for minutes, and missing reviews are reconciled on the next push.
+- **One composer per objective.** Composers started by concurrent reviews raced on the same runner and
+  baseline. Now one runs at a time, and requests that arrive meanwhile make it compose again.

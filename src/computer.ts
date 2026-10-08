@@ -318,7 +318,9 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
       : null;
     if (!shape) return deny("unsupported git request");
     const pushing = shape === "push" || shape === "advertise-push";
-    const ws = parseWorkspaceRepo(repo);
+    // Workspaces are readable only within the computer's own objective.
+    const parsed = parseWorkspaceRepo(repo);
+    const ws = parsed && parsed.objective === props.objective ? parsed : null;
     const isProject = repo === projectRepo(props.project);
     const isContext = repo === contextRepo(props.project);
     const computer = this.env.COMPUTERS.getByName(props.computer);
