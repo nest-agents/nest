@@ -362,7 +362,8 @@
   .tip { position: absolute; z-index: 5; pointer-events: none; max-width: 270px; padding: 9px 11px; font-size: 12.5px; background: var(--text); color: var(--paper); }
   .tip b { display: block; font-weight: 500; margin-bottom: 2px; }
   .tip span { opacity: .75; }
-  .map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; }
+  /* The empty state is a message over the map, never a lid on it: the lane headers underneath stay clickable. */
+  .map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; pointer-events: none; }
   .map-empty div { max-width: 420px; }
   .map-empty h3 { font-size: 22px; letter-spacing: -.035em; margin-bottom: 6px; }
   .map-empty p { color: var(--muted); font-size: 13.5px; }
