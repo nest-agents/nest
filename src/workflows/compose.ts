@@ -149,6 +149,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       for (let i = 0; i < PREVIEW_PROBES; i++) {
         if (i) await step.sleep(`preview ${id}: wait ${i}`, "30 seconds");
         const seen = await step.do(`preview ${id}: open ${i}`, { retries: { limit: 1, delay: "10 seconds" }, timeout: "2 minutes" }, async () => {
+          await objective.claimComposer(event.instanceId); // re-stamps the lease for the holder
           const r = await smokeCheck(env, url);
           const deployed = r.httpStatus > 0 && r.httpStatus < 400;
           if (deployed && r.screenshot) await env.OBJECTS.put(`shots/${id}.png`, r.screenshot, { httpMetadata: { contentType: "image/png" } });
@@ -209,6 +210,7 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       if (prior && !["composing", "checking", "outdated"].includes(prior.status) && !unblocked) return { id: c.id, skipped: prior.status };
 
       const composed = await step.do(`compose ${c.id}`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "30 minutes" }, async () => {
+        await objective.claimComposer(event.instanceId); // re-stamps the lease for the holder
         const note = c.reusedAcross.length
           ? `Keeps ${c.reusedAcross.map((id) => `${short(id)} ${plan.picks[id]?.title ?? ""}`).join(", ")} from an approach that was not chosen.`
           : null;
@@ -291,9 +293,16 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         .filter((c) => c.status === "ready" && c.baseVersion === head.version)
         .sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99));
       const skipped: string[] = [];
+      const current = new Map((await projectStub(env, plan.project).context()).map((i) => [i.id, i.version]));
       for (const c of ready) {
         if (Object.keys(c.choice).some((g) => !g.startsWith("replace:"))) {
           skipped.push(c.id);
+          continue;
+        }
+        // Work written against an older requirement version needs a human's context review.
+        const stale = c.order.flatMap((id) => state.contributions.find((x) => x.id === id)?.cites ?? []).some((x) => (current.get(x.item) ?? 0) > x.version);
+        if (stale) {
+          await objective.log("Nest", "auto-accept", `${c.name} is ready but cites an older version of a requirement, so a human reviews it`, { candidate: c.id });
           continue;
         }
         try {

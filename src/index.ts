@@ -279,11 +279,15 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
   if (route === "POST /tasks") {
     require(p, "owner");
     const b = await body<{ id: string; title: string; brief: string; alternative?: string | null }>(request);
-    if (!/^t_[a-z0-9-]{1,48}$/.test(b.id ?? "")) throw new HttpError(400, "INVALID_TASK_ID");
+    if (!/^t_[a-z0-9-]{1,48}$/.test(b.id ?? "")) throw new HttpError(400, "INVALID_TASK_ID", "a task id is t_ followed by lowercase letters, digits and hyphens");
+    const title = String(b.title ?? "").trim().slice(0, 200);
+    const brief = String(b.brief ?? "").trim().slice(0, 8000);
+    if (!title || !brief) throw new HttpError(400, "INVALID_TASK", "a task needs a title and a brief");
     if (b.alternative && !/^[a-z0-9][a-z0-9-]{0,47}$/.test(b.alternative)) throw new HttpError(400, "INVALID_GROUP", "a competing group is lowercase letters, digits and hyphens");
+    if (await objective.task(b.id)) throw new HttpError(409, "TASK_EXISTS", `${b.id} already exists`);
     const head = await project.head();
     if (!head) throw new HttpError(409, "NOT_BOOTSTRAPPED");
-    return json(await objective.createTask({ id: b.id, title: String(b.title).slice(0, 200), brief: String(b.brief).slice(0, 8000), alternative: b.alternative || null, baseVersion: head.version }));
+    return json(await objective.createTask({ id: b.id, title, brief, alternative: b.alternative || null, baseVersion: head.version }));
   }
 
   const taskAction = /^\/tasks\/(t_[a-z0-9-]{1,48})\/(start|pause|stop)$/.exec(rest);

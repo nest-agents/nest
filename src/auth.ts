@@ -41,7 +41,9 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
   const header = request.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   const cookie = /(?:^|;\s*)nest_owner=([^;]+)/.exec(request.headers.get("cookie") ?? "")?.[1] ?? "";
-  const owner = bearer || decodeURIComponent(cookie);
+  let fromCookie = "";
+  try { fromCookie = decodeURIComponent(cookie); } catch { /* a malformed cookie is no cookie */ }
+  const owner = bearer || fromCookie;
   if (owner && env.NEST_OWNER_TOKEN && timingSafeEqual(owner, env.NEST_OWNER_TOKEN)) return { kind: "owner" };
   if (bearer.startsWith("p.")) {
     const [, id, revText, sig, extra] = bearer.split(".");

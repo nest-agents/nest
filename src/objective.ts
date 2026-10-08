@@ -364,7 +364,7 @@ export class ObjectiveDO extends DurableObject<Env> {
    * One composer per objective. Composers share runner names and baselines, so two at once would race.
    * A composer that finds one running records that more work arrived; the running one composes again.
    */
-  claimComposer(owner: string, leaseMs = 25 * 60_000): boolean {
+  claimComposer(owner: string, leaseMs = 40 * 60_000): boolean {
     const now = Date.now();
     const held = this.meta("composer");
     if (held) {

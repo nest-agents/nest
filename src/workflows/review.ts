@@ -5,7 +5,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { ArtifactsClient } from "../artifacts";
 import { citeOf } from "../context";
 import { unifiedDiff } from "../diff";
-import { chat, parseJsonReply, type ChatMessage } from "../models";
+import { chat, isPriced, parseJsonReply, type ChatMessage } from "../models";
 import { objectiveStub, projectStub, registryStub, short } from "../names";
 import { parseCitation, type Citation, type Verdict } from "../protocol";
 import type { Participant } from "../objective";
@@ -147,7 +147,9 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
         return r.state === "needs-reviewers" ? { state: r.state, count: r.count, excludeFamilies: r.excludeFamilies } : { state: r.state, count: 0, excludeFamilies: [] as string[] };
       });
       if (routing.state !== "needs-reviewers") break;
-      const reviewers = input.participants.filter((p) => p.harness === "reviewer" && !routing.excludeFamilies.includes(p.family));
+      // Reviewers Nest runs itself: a registered reviewer with a priced model. An invited external reviewer
+      // reviews through MCP, so it is never called from here.
+      const reviewers = input.participants.filter((p) => p.harness === "reviewer" && isPriced(p.model) && !routing.excludeFamilies.includes(p.family));
       // Strongest first; the fourth family is the one asked when agents need another opinion.
       const preference = ["anthropic", "openai", "deepseek", "zhipu"];
       const rank = (f: string) => (preference.includes(f) ? preference.indexOf(f) : preference.length);

@@ -151,7 +151,7 @@ export async function bootstrapProject(env: Env, id: string, waitSeconds = 5) {
   const existing = await project.head();
   if (existing) return { head: existing, config: await readProjectConfig(env, id, existing.commit) };
   const commit = await waitForHead(env, projectRepo(id), waitSeconds);
-  if (!commit) throw new RegistryError("NO_CODE_YET", `push a first commit to the main branch of ${projectRepo(id)}`);
+  if (!commit) throw new RegistryError("NO_CODE_YET", `no commit on the main branch of ${projectRepo(id)} yet: push one, or wait for the import to finish`);
   // Validate before the first checkpoint exists: a malformed configuration is the owner's to fix now.
   const config = await readProjectConfig(env, id, commit);
   const head = await project.bootstrap(commit, await readContext(env, id));
