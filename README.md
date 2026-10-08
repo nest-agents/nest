@@ -128,7 +128,7 @@ from the owner.
 pnpm install
 # In wrangler.jsonc: set ACCOUNT_ID, and the route (or "workers_dev": true).
 # Workflow names (nest-ingest, nest-task, nest-review, nest-compose) must be unused in your account.
-pnpm exec wrangler artifacts namespaces create nest     # or reuse a namespace; set ARTIFACTS_NAMESPACE
+# Artifacts creates the namespace named in wrangler.jsonc (ARTIFACTS_NAMESPACE, "nest") on first use.
 pnpm exec wrangler r2 bucket create nest-objects
 # Create an AI Gateway named "nest" with authentication on, and an AI Gateway Run token for it.
 # Then put these in a secrets file:
