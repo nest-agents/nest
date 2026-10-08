@@ -455,7 +455,7 @@ function inboxHtml() {
       <ul class="reasons">${i.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${reviewsOf(c.id).map(reviewHtml).join("")}
       ${owner() ? `<div class="field"><label for="rv-${esc(c.id)}">Your review</label><input id="rv-${esc(c.id)}" placeholder="One sentence: why"></div>
       <div class="row"><button class="btn small primary" data-review="${esc(c.id)}" data-verdict="approve" type="button">Approve</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="changes" type="button">Request changes</button><button class="btn small" data-review="${esc(c.id)}" data-verdict="block" type="button">Block</button></div>` : ""}
-      <div class="row"><button class="btn small" data-open="${esc(c.id)}" type="button">Open contribution</button></div></div>`;
+      <div class="row"><button class="btn small" data-open="${esc(c.id)}" type="button">Open contribution</button>${owner() && i.reasons.some((r) => /could not reach a verdict|No independent agent reviewer/.test(r)) ? `<button class="btn small" data-again="${esc(c.id)}" type="button">Ask agents again</button>` : ""}</div></div>`;
   }).join("");
 }
 
@@ -813,6 +813,7 @@ document.addEventListener("click", (e) => {
       await api(`${BASE}/compose`, { method: "POST", body: "{}" });
     }, `Kept ${short(keep)}; recomposing`);
   }
+  if (t.dataset.again) return act(() => api(`${BASE}/contributions/${t.dataset.again}/review-again`, { method: "POST", body: "{}" }), "Asked agents to review again");
   if (t.dataset.resolve) return act(() => api(`${BASE}/inbox/${t.dataset.resolve}/resolve`, { method: "POST", body: "{}" }), "Dismissed");
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";

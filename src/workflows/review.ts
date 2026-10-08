@@ -48,6 +48,8 @@ function routeFor(env: Env, p: Participant): { provider: "openai" | "openrouter"
 export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
     const { objective: objectiveId, contribution: id } = event.payload;
+    // A run a human asked for again records its own reviews; the first run's ids stay as they were.
+    const again = event.instanceId === `review-${id}` ? "" : `-${event.instanceId.slice(-8)}`;
     const objective = objectiveStub(this.env, objectiveId);
 
     const input = await step.do("read the contribution and its context", async () => {
@@ -179,7 +181,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           const cites = findings.map((f) => (f.cite ? parseCitation(f.cite) : null)).filter((c): c is Citation => !!c);
           await objective.addReview({
             // A later round is a new review: an attempt that ended without a verdict must not block its retry.
-            id: round ? `rv-${reviewer.id}-${id}-r${round}` : `rv-${reviewer.id}-${id}`, target: id, reviewer: reviewer.id, verdict,
+            id: `rv-${reviewer.id}-${id}${again}${round ? `-r${round}` : ""}`, target: id, reviewer: reviewer.id, verdict,
             confidence: typeof parsed?.confidence === "number" ? parsed.confidence : 0,
             summary: String(parsed?.summary ?? note).slice(0, 2000), findings, triage: false,
           }, cites);

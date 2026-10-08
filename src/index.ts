@@ -321,6 +321,19 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     return json(await objective.log("Agents", "note", `${who}: ${String(b.text ?? "").slice(0, 600)}`, { task: p.task, epoch: p.epoch }));
   }
 
+  const reviewAgain = /^\/contributions\/(c_[0-9a-f]{12})\/review-again$/.exec(rest);
+  if (reviewAgain && request.method === "POST") {
+    // When agent reviewers could not reach a verdict, a human can ask them once more.
+    require(p, "owner");
+    const c = await objective.contribution(reviewAgain[1]!);
+    if (!c) throw new HttpError(404, "NOT_FOUND");
+    if (!["proposed", "changes"].includes(c.status)) throw new HttpError(409, "ALREADY_DECIDED", `this contribution is ${c.status}`);
+    const id = `review-${c.id}-${Date.now().toString(36)}`;
+    await env.REVIEWS.create({ id, params: { objective: objectiveId, contribution: c.id } });
+    await objective.log("Workflows", "review", `A human asked agents to review ${c.title} again`, { contribution: c.id });
+    return json({ workflow: id });
+  }
+
   if (route === "POST /reviews") {
     require(p, "owner");
     const b = await body<{ target: string; verdict: "approve" | "changes" | "block" | "comment"; summary: string }>(request);
