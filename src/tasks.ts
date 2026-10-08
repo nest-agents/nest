@@ -33,7 +33,7 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
   const participants = await objective.participants();
   const who = participants.find((p) => p.id === participantId);
   if (!who) throw new TaskError("UNKNOWN_PARTICIPANT");
-  if (mode === "agent" && !["codex", "nest-agent", "opencode"].includes(who.harness)) throw new TaskError("NOT_A_WORKER", `${who.name} cannot run tasks`);
+  if (mode === "agent" && !["codex", "nest-agent"].includes(who.harness)) throw new TaskError("NOT_A_WORKER", `${who.name} does not run inside Nest; start it manually and let it push to its workspace`);
   const head = await project.head();
   if (!head) throw new TaskError("NOT_BOOTSTRAPPED");
 
@@ -44,6 +44,8 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
   const handover = t.status === "paused" && t.repo;
   const handoverNote = handover ? t.pausedNote : null;
   const source = handover ? t.repo! : projectRepo(projectId);
+  // A fresh attempt starts from the exact head (or the composed tree a repair fixes), whatever main holds.
+  const from = handover ? null : (t.baseCommit ?? head.commit);
   await artifacts.fork(source, repo, `Nest ${taskId} attempt ${epoch}`);
   await objective.startAttempt(taskId, participantId, t.epoch, repo);
   await objective.log("Artifacts", "fork", handover
@@ -55,11 +57,11 @@ export async function startTask(env: Env, objectiveId: string, taskId: string, p
     const token = await artifacts.token(repo, "write", 3600);
     using r = await env.ARTIFACTS.get(repo);
     const info = await r.info();
-    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, objectiveId, generation, taskId, epoch), epoch };
+    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, objectiveId, generation, taskId, epoch), epoch, from };
   }
   const workflow = taskWorkflowId(generation, taskId, epoch);
   try {
-    await env.TASKS.create({ id: workflow, params: { objective: objectiveId, project: projectId, task: taskId, epoch, participant: participantId, repo, handover: handoverNote } });
+    await env.TASKS.create({ id: workflow, params: { objective: objectiveId, project: projectId, task: taskId, epoch, participant: participantId, repo, from, handover: handoverNote } });
   } catch (e) {
     // Never leave an attempt marked running without a workflow behind it.
     await objective.finishAttempt(taskId, epoch, "failed", `Could not start the workflow: ${String(e).slice(0, 200)}`);

@@ -135,11 +135,11 @@ export class Computer extends DurableObject<Env> {
 
   // ---------- agent workspaces ----------
 
-  async prepareAgent(props: ComputerProps, remote: string, identity: { name: string; email: string }, cloneFrom?: string): Promise<ExecResult> {
+  async prepareAgent(props: ComputerProps, remote: string, identity: { name: string; email: string }): Promise<ExecResult> {
     this.ctx.storage.kv.put("props", props);
     await this.start();
     await this.files.mkdir(TASK_DIR, { recursive: true }).catch(() => undefined);
-    const clone = await this.exec(["git", "clone", "--quiet", cloneFrom ?? remote, REPO_DIR]);
+    const clone = await this.exec(["git", "clone", "--quiet", remote, REPO_DIR]);
     if (clone.exitCode !== 0) return clone;
     return this.sh(
       `git config user.name ${q(identity.name)} && git config user.email ${q(identity.email)} && git remote set-url origin ${q(remote)} && git config push.default current`,
@@ -186,7 +186,7 @@ export class Computer extends DurableObject<Env> {
   /** Stop the agent at once and capture uncommitted work as a patch for whoever resumes. */
   async stopAgent(): Promise<{ uncommitted: string; head: string }> {
     if (!this.container.running) return { uncommitted: "", head: "" };
-    await this.sh(`pkill -KILL -f "codex|opencode|nest-agent" || true`, "/", 15);
+    await this.sh(`pkill -KILL -f "codex|nest-agent" || true`, "/", 15);
     const diff = await this.sh("git add -A && git diff --cached --binary", REPO_DIR, 30);
     const head = await this.sh("git rev-parse HEAD", REPO_DIR, 15);
     return { uncommitted: diff.stdout.slice(0, 500_000), head: head.stdout.trim() };

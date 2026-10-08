@@ -239,7 +239,7 @@ function renderHeads(L) {
     const p = t.participant ? who(t.participant) : null;
     const st = { open: "Open", running: "Working", paused: "Paused", done: "Done", failed: "Stopped" }[t.status] ?? t.status;
     const acts = owner()
-      ? t.status === "running" ? `<button class="mini" data-pause="${esc(t.id)}" type="button">Pause</button>`
+      ? t.status === "running" ? `<button class="mini" data-pause="${esc(t.id)}" type="button">Pause</button><button class="mini" data-stop="${esc(t.id)}" type="button">Stop</button>`
         : t.status !== "done" ? `<button class="mini" data-start="${esc(t.id)}" type="button">${t.status === "paused" ? "Hand over" : "Start"}</button>` : ""
       : "";
     const alt = t.alternative && t.alternative !== prevAlt ? `<span class="alt">Competing: ${esc(t.alternative)}</span>` : "";
@@ -805,19 +805,20 @@ function newTask() {
 }
 
 function startTask(id) {
-  const workers = S.participants.filter((p) => ["codex", "nest-agent", "opencode", "external"].includes(p.harness) || p.kind === "person");
+  const workers = S.participants.filter((p) => ["codex", "nest-agent", "external"].includes(p.harness) || p.kind === "person");
+  const runsHere = (p) => ["codex", "nest-agent"].includes(p?.harness);
   const t = S.tasks.find((x) => x.id === id);
   modal(`<form class="form" id="st"><h3>${t.status === "paused" ? "Hand over" : "Start"} ${esc(t.title)}</h3><p>${t.status === "paused" ? "The next participant continues from the paused tree, the saved uncommitted work and the notes." : "Nest forks the accepted checkpoint into a workspace for this attempt."}</p>
-    <div class="field"><label for="st-p">Participant</label><select id="st-p">${workers.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.kind === "person" ? "human, push from your machine" : `${p.harness}, ${p.model}`)})</option>`).join("")}</select></div>
+    <div class="field"><label for="st-p">Participant</label><select id="st-p">${workers.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.kind === "person" ? "human, pushes from their machine" : runsHere(p) ? `${p.harness}, ${p.model}` : `external agent, ${p.model}`)})</option>`).join("")}</select></div>
     <div class="row"><button class="btn small primary" type="submit">Start</button></div></form>`, (root, close) => {
     root.querySelector("#st").onsubmit = (e) => {
       e.preventDefault();
       const participant = root.querySelector("#st-p").value;
-      const person = who(participant)?.kind === "person";
+      const manual = !runsHere(who(participant));
       act(async () => {
-        const r = await api(`${BASE}/tasks/${id}/start`, { method: "POST", body: JSON.stringify({ participant, mode: person ? "manual" : "agent" }) });
+        const r = await api(`${BASE}/tasks/${id}/start`, { method: "POST", body: JSON.stringify({ participant, mode: manual ? "manual" : "agent" }) });
         close();
-        if (person) modal(`<div class="form"><h3>Your workspace is ready</h3><p>Clone, commit with the Nest trailers, push to main, then publish. The token expires at ${esc(r.expiresAt)}.</p><pre class="diff">git clone ${esc(r.remote)} ${esc(r.repo)}\ncd ${esc(r.repo)}\n# edit, then commit ending with:\n#   Nest-Task: ${esc(id)}\n#   Nest-Attempt: ${esc(id)}/e${esc(r.epoch)}\ngit -c http.extraHeader="Authorization: Bearer ${esc(r.token)}" push origin HEAD:main</pre></div>`);
+        if (manual) modal(`<div class="form"><h3>Your workspace is ready</h3><p>Clone, commit with the Nest trailers, push to main, then publish. The token expires at ${esc(r.expiresAt)}.</p><pre class="diff">git clone ${esc(r.remote)} ${esc(r.repo)}\ncd ${esc(r.repo)}\n# edit, then commit ending with:\n#   Nest-Task: ${esc(id)}\n#   Nest-Attempt: ${esc(id)}/e${esc(r.epoch)}\ngit -c http.extraHeader="Authorization: Bearer ${esc(r.token)}" push origin HEAD:main</pre></div>`);
       }, "Started");
     };
   });
@@ -848,6 +849,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.act === "compose") return act(() => api(`${BASE}/compose`, { method: "POST", body: "{}" }), "Composing outcomes");
   if (t.dataset.start) return startTask(t.dataset.start);
   if (t.dataset.pause) return act(() => api(`${BASE}/tasks/${t.dataset.pause}/pause`, { method: "POST", body: "{}" }), "Pause requested; the agent stops at its next boundary");
+  if (t.dataset.stop) return act(() => api(`${BASE}/tasks/${t.dataset.stop}/stop`, { method: "POST", body: "{}" }), "Stopped; committed work was published");
   if (t.dataset.keep) {
     const keep = t.dataset.keep;
     const others = t.dataset.among.split(",").filter((id) => id && id !== keep);

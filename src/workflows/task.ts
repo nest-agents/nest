@@ -10,8 +10,11 @@ import { buildPack } from "../packs";
 import { citeOf } from "../context";
 import { readProjectConfig } from "../projects";
 
-/** `handover` is the paused attempt's note, captured before the new attempt clears it from the task. */
-type Params = { objective: string; project: string; task: string; epoch: number; participant: string; repo: string; handover?: string | null };
+/**
+ * `from` is the commit the attempt starts from: the head, or the composed tree a repair fixes. `handover`
+ * is the paused attempt's note, captured before the new attempt clears it from the task.
+ */
+type Params = { objective: string; project: string; task: string; epoch: number; participant: string; repo: string; from?: string | null; handover?: string | null };
 type Handover = { patch: string | null; head: string; notes: string[]; by: string };
 
 const REPO_DIR = "/workspace/repo";
@@ -81,7 +84,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const config = head ? await readProjectConfig(env, projectId, head.commit).catch(() => null) : null;
       const requirement = (await project.context()).find((i) => i.kind === "requirement");
       return {
-        who, handover, baseCommit: task.baseCommit, pack: pack.text, packTokens: pack.tokens,
+        who, handover, pack: pack.text, packTokens: pack.tokens,
         prompt: brief({
           name: who.name, task: tid, epoch, title: task.title, body: task.brief, alternative: task.alternative, objective: state.objective.title ?? "", criteria: state.objective.criteria, handover, repair: !!task.baseCommit,
           project: { name: record?.name ?? projectId, description: record?.description ?? "" }, setup: config?.setup ?? null,
@@ -95,10 +98,12 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const props = { computer: computerName, role: "agent" as const, project: projectId, objective: oid, task: tid, epoch, workspace: repo };
       const ready = await computer.prepareAgent(props, artifactsRemote(env, repo), { name: setup.who.name, email: `${setup.who.id}@agents.nest.invalid` });
       if (ready.exitCode !== 0) throw new Error(`workspace setup failed: ${ready.stderr.slice(-500)}`);
-      if (setup.baseCommit) {
-        // A repair starts from the composed outcome: Nest recorded that commit as a materialization.
-        const r = await computer.exec(["bash", "-lc", `git fetch --quiet ${artifactsRemote(env, projectRepo(projectId))} ${setup.baseCommit} && git reset --quiet --hard FETCH_HEAD && git push --quiet origin HEAD:main`], REPO_DIR);
-        if (r.exitCode !== 0) throw new Error(`could not start from the composed outcome: ${r.stderr.slice(-500)}`);
+      const from = event.payload.from;
+      if (from && /^[0-9a-f]{40}$/.test(from)) {
+        // The workspace was forked from the project's main; the attempt starts from the exact head, or
+        // from the composed tree a repair fixes, both of which the project repository holds.
+        const r = await computer.exec(["bash", "-lc", `git fetch --quiet ${artifactsRemote(env, projectRepo(projectId))} ${from} && git reset --quiet --hard FETCH_HEAD && git push --quiet origin HEAD:main`], REPO_DIR);
+        if (r.exitCode !== 0) throw new Error(`could not start from ${from.slice(0, 7)}: ${r.stderr.slice(-500)}`);
       }
       if (setup.handover?.patch) {
         const patch = await env.OBJECTS.get(setup.handover.patch);
@@ -130,7 +135,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
     let offset = 0;
     let paused = false;
     const myGeneration = parseWorkspaceRepo(repo)?.generation;
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 90; i++) {
       // An attempt whose objective no longer has its generation stands down. Only a definite different
       // generation counts; a failed read (for example during a deploy) does not.
       const stale = await step.do(`generation check ${i}`, async () => {
@@ -203,7 +208,8 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       const ok = st.state === "exited" && st.exitCode === 0;
       const dirty = r.stdout.split("\n").filter((l) => /^[ MADRCU?]{2} /.test(l)).length;
       const published = await objective.attemptContributions(tid, epoch);
-      await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${published} contributions published${dirty ? `; ${dirty} files left uncommitted` : ""}${ok ? "" : `; ${st.tail?.slice(-200) ?? st.state}`}`);
+      const why = ok ? "" : st.state === "running" ? "; stopped after the time limit" : `; ${st.tail?.slice(-200) ?? st.state}`;
+      await objective.finishAttempt(tid, epoch, ok ? "done" : "failed", `${published} contributions published${dirty ? `; ${dirty} files left uncommitted` : ""}${why}`);
       await computer.destroy("task finished");
       return { ok, results };
     });
