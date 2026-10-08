@@ -71,3 +71,15 @@ describe("the review policy a human writes", () => {
     expect(effectivePolicy(item!.policy)).toMatchObject({ decider: "human", autoAccept: false });
   });
 });
+
+import { parseJsonReply } from "../src/models";
+
+describe("a verdict in a model reply", () => {
+  it("is the last balanced object, whatever prose came first", () => {
+    expect(parseJsonReply('Thinking: the map {a: 1} matters. {"verdict":"approve","confidence":0.9}')).toEqual({ verdict: "approve", confidence: 0.9 });
+    expect(parseJsonReply('```json\n{"verdict":"changes","summary":"x"}\n```')).toEqual({ verdict: "changes", summary: "x" });
+    expect(parseJsonReply('{"summary":"braces } in \\"strings\\" {"}')).toEqual({ summary: 'braces } in "strings" {' });
+    expect(parseJsonReply("no object here")).toBeNull();
+    expect(parseJsonReply('{"unterminated": ')).toBeNull();
+  });
+});

@@ -452,3 +452,35 @@ describe("when agents decide", () => {
   });
 });
 
+
+describe("what could ship now", () => {
+  it("offers the approved part of an outcome when some work still waits for a human", () => {
+    const g = graph(
+      C("robots", 1, { status: "approved" }),
+      C("robots-use", 2, { requires: ["robots"], status: "approved" }),
+      C("latency", 3, { status: "approved" }),
+      C("monitor", 4, { status: "proposed" }),
+    );
+    const f = planFrontier(g, new Set());
+    expect(f.map((c) => c.order.join(","))).toEqual(["robots,robots-use,latency,monitor", "robots,robots-use,latency"]);
+    expect(f[1]!.ready).toBe(true);
+  });
+  it("drops approved work that builds on work still waiting", () => {
+    const g = graph(C("store", 1, { status: "proposed" }), C("page", 2, { requires: ["store"], status: "approved" }), C("badge", 3, { status: "approved" }));
+    expect(planFrontier(g, new Set()).map((c) => c.order.join(","))).toEqual(["store,page,badge", "badge"]);
+  });
+  it("offers nothing extra when everything is approved or nothing is", () => {
+    expect(planFrontier(graph(C("a", 1, { status: "approved" }), C("b", 2, { status: "approved" })), new Set())).toHaveLength(1);
+    expect(planFrontier(graph(C("a", 1, { status: "proposed" }), C("b", 2, { status: "proposed" })), new Set())).toHaveLength(1);
+  });
+  it("keeps only the choices the approved part still contains", () => {
+    const g = graph(
+      C("enc", 1, { status: "approved" }),
+      C("direct", 2, { requires: ["enc"], alternative: "strategy", status: "proposed" }),
+      C("bg", 3, { requires: ["enc"], alternative: "strategy", status: "proposed" }),
+    );
+    const subs = planFrontier(g, new Set()).filter((c) => c.order.join(",") === "enc");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.choice).toEqual({});
+  });
+});

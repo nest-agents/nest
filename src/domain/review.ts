@@ -155,10 +155,13 @@ export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact
     const bar = protectedHit.length ? Math.max(policy.minConfidence, AGENT_PROTECTED_CONFIDENCE) : policy.minConfidence;
     if (verdicts.size === 1 && agents.every((r) => validConfidence(r.confidence) && r.confidence >= bar))
       return { state: verdicts.has("changes") ? "changes" : "approved", by: "agents" };
-    // Not settled: one more independent family, once. After that, a human.
+    // Not settled: one more independent family, once. After that, a human, told exactly why.
     if (families.size < required + 1)
       return { state: "needs-reviewers", count: 1, excludeFamilies: [...new Set([subject.authorFamily, ...families])] };
-    return { state: "needs-human", reasons: ["Agents could not agree, even with a reviewer from another family"] };
+    const why = verdicts.size > 1 ? "Reviewers disagree, even with a reviewer from another family"
+      : protectedHit.length ? `Reviewers agree but none is confident enough (${bar}) for a change to protected files: ${protectedHit.join(", ")}`
+      : "Reviewers agree but are not confident enough";
+    return { state: "needs-human", reasons: [why] };
   }
 
   const reasons: string[] = [];

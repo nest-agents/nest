@@ -102,11 +102,30 @@ export async function chat(
   return { text, inputTokens: inT, outputTokens: outT, model: route.model };
 }
 
-/** Pulls the first JSON object out of a model reply, tolerating code fences. */
+/**
+ * The JSON object in a model reply. Models that reason before they answer put prose, sometimes with
+ * braces, before the object, so every balanced object is tried and the last one that parses wins.
+ */
 export function parseJsonReply<T>(text: string): T | null {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
-  const start = fenced.indexOf("{");
-  const end = fenced.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try { return JSON.parse(fenced.slice(start, end + 1)) as T; } catch { return null; }
+  const source = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
+  let found: T | null = null;
+  for (let start = source.indexOf("{"); start >= 0; start = source.indexOf("{", start + 1)) {
+    let depth = 0, inString = false, escaped = false;
+    for (let i = start; i < source.length; i++) {
+      const ch = source[i]!;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        try { found = JSON.parse(source.slice(start, i + 1)) as T; } catch { /* not an object; keep scanning */ }
+        break;
+      }
+    }
+  }
+  return found;
 }

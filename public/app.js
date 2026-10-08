@@ -684,7 +684,7 @@ function savePolicy(form) {
 
 function renderProject() {
   if (!P.head) {
-    $("#page").innerHTML = `<div class="empty wide"><h4>Waiting for the code</h4><p>This project's repository in Artifacts is empty. ${owner() ? "Push your code to its main branch, then check again." : "The owner pushes the first commit."}</p>
+    $("#page").innerHTML = `<div class="empty wide"><h4>Waiting for the code</h4><p>This project's repository in Artifacts has no commit on main yet: an import may still be running, or nothing has been pushed. ${owner() ? "Check again in a moment, or push your code to its main branch." : "The owner pushes the first commit."}</p>
       ${owner() ? `<div class="row"><button class="btn small primary" data-bootstrap="${esc(P.project.id)}" type="button">Check for code</button></div>` : ""}</div>`;
     return;
   }
@@ -714,6 +714,7 @@ function newProject() {
         const url = v("#np-url");
         const r = await api("/api/projects", { method: "POST", body: JSON.stringify({ id: v("#np-id"), name: v("#np-name"), description: v("#np-desc"), source: url ? { url } : null }) });
         close();
+        if (r.importing) { location.href = `/p/${r.project.id}`; return; }
         if (r.push) modal(`<div class="form"><h3>Push your code</h3><p>The token writes to this repository only and expires at ${esc(r.push.expiresAt)}. After the push, open the project and choose Check for code.</p><pre class="diff">git remote add nest ${esc(r.push.remote)}\ngit -c http.extraHeader="Authorization: Bearer ${esc(r.push.token)}" push nest HEAD:main</pre><div class="row"><a class="btn small primary" href="/p/${esc(r.project.id)}">Open the project</a></div></div>`);
       }, "Project created");
     };

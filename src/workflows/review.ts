@@ -167,15 +167,18 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           ];
           let parsed: Verdictish | null = null;
           let note = "";
+          let reply = "";
           // Reasoning models spend part of the budget thinking, so OpenAI reviewers get room and low effort,
           // and a reply that is not a verdict is asked for once more.
           const openai = reviewer.family === "openai";
           for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
             try {
               // Larger changes produce longer verdicts, and Workers AI's model reasons before it answers.
-              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: reviewer.family === "anthropic" ? 4000 : 6000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
+              // Models that reason before answering spend output tokens on the reasoning first.
+              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: reviewer.family === "anthropic" ? 4000 : openai ? 6000 : 10_000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
               parsed = parseJsonReply<Verdictish>(r.text);
-              if (!parsed) note = "Reviewer reply was not valid JSON.";
+              reply = r.text;
+              if (!parsed) note = `Reviewer reply was not a verdict${reply.trim() ? `: ${reply.trim().slice(0, 240)}` : " (empty reply)"}`;
             } catch (e) {
               note = `Reviewer unavailable: ${String(e).slice(0, 200)}`;
             }

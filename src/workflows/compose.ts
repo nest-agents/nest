@@ -264,9 +264,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const broken = failed.filter((f) => passingAtHead.has(f.id));
         const pending = checks.some((x) => x.status === "PENDING");
         const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved && !pending ? "ready" : "waiting";
+        const passed = checks.filter((x) => x.status === "PASS").length;
         await objective.updateCandidate(c.id, { status, commit: composed.commit, checks: withHead(checks), previewReady: preview?.status === "PASS", conflict: null }, {
-          svc: preview ? "Browser Rendering" : "Sandbox",
-          text: `${c.name}: ${checks.length - failed.length} of ${checks.length} checks passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
+          svc: preview && !pending ? "Browser Rendering" : "Sandbox",
+          text: `${c.name}: ${passed} of ${checks.length} checks passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}${pending ? "; the preview waits until every contribution is approved" : ""}`,
         });
         if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
         // Repair regressions only: a check that passed for this same selection of work before (for example

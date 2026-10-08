@@ -138,7 +138,16 @@ export async function createProject(env: Env, input: ProjectInput) {
   const record = await registry.addProject({ id, name, description, repo, contextRepo: contextRepo(id) });
   await ensureRoster(env);
 
-  if (input.source?.url) return { project: record, ...(await bootstrapProject(env, id, 60)) };
+  if (input.source?.url) {
+    // Artifacts imports in the background. A small repository is ready in seconds; a large one is not, and
+    // the project page offers "Check for code" until it is.
+    try {
+      return { project: record, ...(await bootstrapProject(env, id, 20)), importing: false };
+    } catch (e) {
+      if (!/^NO_CODE_YET/.test(String((e as Error)?.message))) throw e;
+      return { project: record, head: null, importing: true };
+    }
+  }
   const token = await artifacts.token(repo, "write", 3600);
   using r = await env.ARTIFACTS.get(repo);
   const info = await r.info();

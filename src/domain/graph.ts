@@ -19,6 +19,16 @@ export type ContributionNode = {
 /** Within an alternative group, an approach is everything one task contributed to it. */
 const optionOf = (n: ContributionNode) => n.task ?? n.id;
 
+/** True when this contribution and everything it builds on (outside the base) is approved. */
+function closureApproved(nodes: Map<string, ContributionNode>, id: string, accepted: Set<string>, seen = new Set<string>()): boolean {
+  if (accepted.has(id)) return true;
+  const n = nodes.get(id);
+  if (!n || n.status !== "approved") return false;
+  if (seen.has(id)) return true;
+  seen.add(id);
+  return n.requires.every((d) => closureApproved(nodes, d, accepted, seen));
+}
+
 /** Every contribution this one depends on, directly or not. */
 function ancestors(nodes: Map<string, ContributionNode>, id: string, seen = new Set<string>()): Set<string> {
   for (const d of nodes.get(id)?.requires ?? []) if (!seen.has(d)) { seen.add(d); ancestors(nodes, d, seen); }
@@ -244,6 +254,18 @@ export function planFrontier(
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ selected, order, choice, ready: order.every((id) => nodes.get(id)!.status === "approved") });
+    // What could ship now: the approved part of the same outcome, so work that waits for a human never
+    // holds back work that is ready. Its choices are only the options it still contains.
+    const approvedOnly = selected.filter((id) => order.includes(id) && closureApproved(nodes, id, accepted));
+    if (approvedOnly.length && approvedOnly.length < selected.length) {
+      let sub: string[];
+      try { sub = closure(nodes, approvedOnly, accepted); } catch { continue; }
+      const subKey = sub.join("+");
+      if (seen.has(subKey)) continue;
+      seen.add(subKey);
+      const subChoice = Object.fromEntries(Object.entries(choice).filter(([, id]) => sub.includes(id)));
+      out.push({ selected: approvedOnly, order: sub, choice: subChoice, ready: true });
+    }
   }
   const approvedCount = (c: PlannedCandidate) => c.order.filter((id) => nodes.get(id)!.status === "approved").length;
   // A fragment of another outcome is worth composing only after the whole outcomes are.
