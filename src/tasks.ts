@@ -3,7 +3,7 @@
 
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { agentComputer, objectiveStub, OBJECTIVE_ID, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
+import { agentComputer, objectiveStub, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
 
 export class TaskError extends Error {
   constructor(readonly code: string, message = code) {
@@ -11,9 +11,17 @@ export class TaskError extends Error {
   }
 }
 
-export async function startTask(env: Env, taskId: string, participantId: string, mode: "agent" | "manual") {
-  const objective = objectiveStub(env);
-  const project = projectStub(env);
+/** The project an objective belongs to; every objective is created inside one. */
+export async function projectOf(objective: DurableObjectStub<import("./objective").ObjectiveDO>): Promise<string> {
+  const id = (await objective.state()).objective.project;
+  if (!id) throw new TaskError("NOT_INITIALIZED", "no such objective");
+  return id;
+}
+
+export async function startTask(env: Env, objectiveId: string, taskId: string, participantId: string, mode: "agent" | "manual") {
+  const objective = objectiveStub(env, objectiveId);
+  const projectId = await projectOf(objective);
+  const project = projectStub(env, projectId);
   const t = await objective.task(taskId);
   if (!t) throw new TaskError("NOT_FOUND");
   if (t.status === "running") throw new TaskError("ALREADY_RUNNING");
@@ -26,11 +34,11 @@ export async function startTask(env: Env, taskId: string, participantId: string,
 
   const epoch = t.epoch + 1;
   const generation = await objective.generation();
-  const repo = workspaceRepo(OBJECTIVE_ID, generation, taskId, epoch);
+  const repo = workspaceRepo(objectiveId, generation, taskId, epoch);
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const handover = t.status === "paused" && t.repo;
   const handoverNote = handover ? t.pausedNote : null;
-  const source = handover ? t.repo! : projectRepo(env);
+  const source = handover ? t.repo! : projectRepo(projectId);
   await artifacts.fork(source, repo, `Nest ${taskId} attempt ${epoch}`);
   await objective.startAttempt(taskId, participantId, t.epoch, repo);
   await objective.log("Artifacts", "fork", handover
@@ -42,11 +50,11 @@ export async function startTask(env: Env, taskId: string, participantId: string,
     const token = await artifacts.token(repo, "write", 3600);
     using r = await env.ARTIFACTS.get(repo);
     const info = await r.info();
-    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, OBJECTIVE_ID, generation, taskId, epoch), epoch };
+    return { repo, remote: info.remote, token: token.secret, expiresAt: token.expiresAt, taskToken: await taskToken(env, objectiveId, generation, taskId, epoch), epoch };
   }
   const workflow = taskWorkflowId(generation, taskId, epoch);
   try {
-    await env.TASKS.create({ id: workflow, params: { objective: OBJECTIVE_ID, task: taskId, epoch, participant: participantId, repo, handover: handoverNote } });
+    await env.TASKS.create({ id: workflow, params: { objective: objectiveId, project: projectId, task: taskId, epoch, participant: participantId, repo, handover: handoverNote } });
   } catch (e) {
     // Never leave an attempt marked running without a workflow behind it.
     await objective.finishAttempt(taskId, epoch, "failed", `Could not start the workflow: ${String(e).slice(0, 200)}`);
@@ -59,8 +67,8 @@ export async function startTask(env: Env, taskId: string, participantId: string,
  * Stops a task's current attempt from outside: the agent is killed, committed work is pushed and
  * registered, the attempt is closed and its workflow ends. Also the recovery path for a stuck attempt.
  */
-export async function stopTask(env: Env, taskId: string) {
-  const objective = objectiveStub(env);
+export async function stopTask(env: Env, objectiveId: string, taskId: string) {
+  const objective = objectiveStub(env, objectiveId);
   const t = await objective.task(taskId);
   if (!t) throw new TaskError("NOT_FOUND");
   if (t.status !== "running") throw new TaskError("NOT_RUNNING");
@@ -86,9 +94,9 @@ export async function stopTask(env: Env, taskId: string) {
  * combine, and its brief carries the conflicting contribution's change. What the task publishes stands
  * in for that contribution, so the planner composes the reconciled version instead.
  */
-export async function reconcileConflict(env: Env, candidateId: string, participantId: string) {
-  const objective = objectiveStub(env);
-  const project = projectStub(env);
+export async function reconcileConflict(env: Env, objectiveId: string, candidateId: string, participantId: string) {
+  const objective = objectiveStub(env, objectiveId);
+  const project = projectStub(env, await projectOf(objective));
   const state = await objective.state();
   const c = state.candidates.find((x) => x.id === candidateId);
   if (!c || c.status !== "conflict") throw new TaskError("NOT_A_CONFLICT", "only a conflicted outcome can be reconciled");
@@ -120,5 +128,5 @@ export async function reconcileConflict(env: Env, candidateId: string, participa
   await objective.resolveInbox(`conflict-${candidateId}`, `reconciling in ${id}`);
   await objective.updateCandidate(candidateId, { status: "superseded", note: `Being reconciled in ${id}` });
   await objective.log("Durable Objects", "reconcile", `A human asked ${names.get(participantId) ?? participantId} to reconcile ${x.title} with ${kept.join(", ") || "the checkpoint"}`, { task: id, candidate: candidateId });
-  return startTask(env, id, participantId, "agent");
+  return startTask(env, objectiveId, id, participantId, "agent");
 }

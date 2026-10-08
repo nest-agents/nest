@@ -15,7 +15,9 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
   const ws = parseWorkspaceRepo(repo);
   if (!ws || !SHA1.test(after)) return [];
   const objective = objectiveStub(env, ws.objective);
-  const project = projectStub(env);
+  const projectId = (await objective.state().catch(() => null))?.objective.project;
+  if (!projectId) return [{ commit: after, status: "rejected", reason: "no such objective" }];
+  const project = projectStub(env, projectId);
   const generation = await objective.generation().catch(() => null);
   if (generation !== ws.generation) return [{ commit: after, status: "rejected", reason: "workspace belongs to an earlier generation of this objective" }];
   const attempt = await objective.attemptForRepo(repo);
@@ -79,7 +81,7 @@ export async function ingestPush(env: Env, repo: string, after: string): Promise
     byCommit.set(sha, { id, requires });
     out.push({ commit: sha, status: result.created ? "registered" : "known", contribution: id });
   }
-  if (out.some((o) => o.status === "registered") && !(await objective.isSwarm())) await ensureReviews(env, ws.objective);
+  if (out.some((o) => o.status === "registered")) await ensureReviews(env, ws.objective);
   return out;
 }
 

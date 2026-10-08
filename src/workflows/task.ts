@@ -5,22 +5,26 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { ingestPush } from "../ingest";
 import { chat, gatewayBase, parseJsonReply } from "../models";
 import { boundary, UNTRUSTED_RULE, wrapUntrusted } from "../untrusted";
-import { agentComputer, objectiveStub, parseWorkspaceRepo, projectRepo, projectStub, short } from "../names";
+import { agentComputer, artifactsRemote, objectiveStub, parseWorkspaceRepo, projectRepo, projectStub, registryStub, short } from "../names";
 import { buildPack } from "../packs";
+import { citeOf } from "../context";
+import { readProjectConfig } from "../projects";
 
 /** `handover` is the paused attempt's note, captured before the new attempt clears it from the task. */
-type Params = { objective: string; task: string; epoch: number; participant: string; repo: string; handover?: string | null };
+type Params = { objective: string; project: string; task: string; epoch: number; participant: string; repo: string; handover?: string | null };
 type Handover = { patch: string | null; head: string; notes: string[]; by: string };
 
 const REPO_DIR = "/workspace/repo";
-const remoteOf = (env: Env, repo: string) => `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${repo}.git`;
 
-function brief(p: {
+type BriefInput = {
   name: string; task: string; epoch: number; title: string; body: string; alternative: string | null; objective: string; criteria: string[];
   handover: (Handover & { byName: string }) | null; repair: boolean;
-}): string {
-  return `You are ${p.name}, a coding agent working in Nest on Harbor, a small issue tracker built as a Cloudflare Worker in TypeScript.
-Node 24 runs the TypeScript directly: keep explicit ".ts" extensions in imports and avoid TypeScript-only runtime syntax (enums, namespaces, parameter properties).
+  project: { name: string; description: string }; setup: string | null; checks: { id: string; run: string }[]; protectedPaths: string[]; exampleCite: string;
+};
+
+function brief(p: BriefInput): string {
+  return `You are ${p.name}, a coding agent working in Nest on ${p.project.name}${p.project.description ? `: ${p.project.description}` : ""}.
+The repository is your current directory. If it has an AGENTS.md, read it first and follow it.
 
 Objective: ${p.objective}
 ${p.criteria.map((c) => `- ${c}`).join("\n")}
@@ -34,26 +38,25 @@ Their notes:
 ${p.handover.notes.length ? p.handover.notes.map((n) => `- ${n}`).join("\n") : "- (no notes)"}
 Review what is there before changing it.
 ` : ""}${p.repair ? "\nYour workspace starts from the composed outcome that failed. Fix the failure with the smallest correct change.\n" : ""}
-Before you start, read your context pack: /workspace/nest/context.md. It holds the requirements, decisions, rejected approaches and other agents' work, each with a citation such as req/export-api@v1.
+Before you start, read your context pack: /workspace/nest/context.md. It holds the project's requirements, decisions, rejected approaches and other agents' work, each with a citation such as ${p.exampleCite}.
 
 How Nest works:
 - Publish small, separable commits. Each commit is a contribution that others can reuse even if your overall approach is not chosen. Put a reusable building block (for example a pure helper module with its own tests) in its own commit before the commit that uses it.
 - End every commit message with a blank line and these trailers:
     Nest-Task: ${p.task}
     Nest-Attempt: ${p.task}/e${p.epoch}
-    Nest-Cites: <the context citations you relied on, comma-separated, for example req/csv-format@v1>
+    Nest-Cites: <the context citations you relied on, comma-separated, for example ${p.exampleCite}>
   Add "Nest-Alternative: ${p.alternative ?? "<group>"}" only to the commit that embodies a competing design choice${p.alternative ? "" : " (this task has no competing group, so you will usually not need it)"}.
   Add "Nest-Requires: <contribution id>" only when your change depends on another agent's contribution that is not already in your workspace (see "nest contributions").
 - After each commit, run "nest publish". It pushes and registers your commits; read its output. A rejected commit says why.
 - "nest contributions" lists everyone's work; "nest show <id>" prints one; "nest search <words>" searches the project context; "nest note <text>" records progress for whoever continues.
-- Run the tests with "node --test test/". Add tests for what you build.
-- Do not edit src/data.ts, package.json or wrangler.jsonc.
+${p.setup ? `- Install dependencies with "${p.setup}" before you run anything.\n` : ""}${p.checks.length ? `- Nest runs exactly these checks on every composed outcome, so run them before you publish and add tests for what you build:\n${p.checks.map((c) => `    ${c.id}: ${c.run}`).join("\n")}\n` : "- Add tests for what you build.\n"}- A change to any of these sends your contribution to a human, so change them only when your task needs it: ${p.protectedPaths.join(", ")}.
 - When your part is complete, committed and published, stop.`;
 }
 
 export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
-    const { objective: oid, task: tid, epoch, participant: pid, repo } = event.payload;
+    const { objective: oid, project: projectId, task: tid, epoch, participant: pid, repo } = event.payload;
     const env = this.env;
     const objective = objectiveStub(env, oid);
     const computerName = agentComputer(repo);
@@ -71,20 +74,30 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         const note = saved ? (JSON.parse(saved) as Handover) : null;
         if (prev && note) handover = { ...note, byName: state.participants.find((p) => p.id === String(prev.participant))?.name ?? String(prev.participant) };
       }
-      const pack = await buildPack(env, tid, who.family === "anthropic" ? 300_000 : 200_000);
+      const pack = await buildPack(env, oid, tid, who.family === "anthropic" ? 300_000 : 200_000);
+      const project = projectStub(env, projectId);
+      const head = await project.head();
+      const record = await registryStub(env).project(projectId);
+      const config = head ? await readProjectConfig(env, projectId, head.commit).catch(() => null) : null;
+      const requirement = (await project.context()).find((i) => i.kind === "requirement");
       return {
         who, handover, baseCommit: task.baseCommit, pack: pack.text, packTokens: pack.tokens,
-        prompt: brief({ name: who.name, task: tid, epoch, title: task.title, body: task.brief, alternative: task.alternative, objective: state.objective.title ?? "", criteria: state.objective.criteria, handover, repair: !!task.baseCommit }),
+        prompt: brief({
+          name: who.name, task: tid, epoch, title: task.title, body: task.brief, alternative: task.alternative, objective: state.objective.title ?? "", criteria: state.objective.criteria, handover, repair: !!task.baseCommit,
+          project: { name: record?.name ?? projectId, description: record?.description ?? "" }, setup: config?.setup ?? null,
+          checks: (config?.checks ?? []).map(({ id, run }) => ({ id, run })), protectedPaths: state.policy.protectedPaths,
+          exampleCite: requirement ? citeOf(requirement) : "req/<name>@v1",
+        }),
       };
     });
 
     await step.do("start the computer", { retries: { limit: 2, delay: "10 seconds" }, timeout: "5 minutes" }, async () => {
-      const props = { computer: computerName, role: "agent" as const, objective: oid, task: tid, epoch, workspace: repo };
-      const ready = await computer.prepareAgent(props, remoteOf(env, repo), { name: setup.who.name, email: `${setup.who.id}@agents.nest.invalid` });
+      const props = { computer: computerName, role: "agent" as const, project: projectId, objective: oid, task: tid, epoch, workspace: repo };
+      const ready = await computer.prepareAgent(props, artifactsRemote(env, repo), { name: setup.who.name, email: `${setup.who.id}@agents.nest.invalid` });
       if (ready.exitCode !== 0) throw new Error(`workspace setup failed: ${ready.stderr.slice(-500)}`);
       if (setup.baseCommit) {
         // A repair starts from the composed outcome: Nest recorded that commit as a materialization.
-        const r = await computer.exec(["bash", "-lc", `git fetch --quiet ${remoteOf(env, projectRepo(env))} ${setup.baseCommit} && git reset --quiet --hard FETCH_HEAD && git push --quiet origin HEAD:main`], REPO_DIR);
+        const r = await computer.exec(["bash", "-lc", `git fetch --quiet ${artifactsRemote(env, projectRepo(projectId))} ${setup.baseCommit} && git reset --quiet --hard FETCH_HEAD && git push --quiet origin HEAD:main`], REPO_DIR);
         if (r.exitCode !== 0) throw new Error(`could not start from the composed outcome: ${r.stderr.slice(-500)}`);
       }
       if (setup.handover?.patch) {
@@ -118,16 +131,16 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
     let paused = false;
     const myGeneration = parseWorkspaceRepo(repo)?.generation;
     for (let i = 0; i < 70; i++) {
-      // A reset starts a new generation; an attempt from an older one shuts itself down.
-      // Only a definite different generation stands down; a failed read (for example during a deploy) does not.
+      // An attempt whose objective no longer has its generation stands down. Only a definite different
+      // generation counts; a failed read (for example during a deploy) does not.
       const stale = await step.do(`generation check ${i}`, async () => {
         const current = await objective.generation().catch(() => null);
         return current !== null && current !== myGeneration;
       });
       if (stale) {
-        await step.do("stand down after a reset", async () => {
+        await step.do("stand down", async () => {
           await computer.stopAgent().catch(() => undefined);
-          await computer.destroy("objective was reset").catch(() => undefined);
+          await computer.destroy("objective generation changed").catch(() => undefined);
         });
         return { stale: true };
       }
@@ -172,7 +185,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         if (key) await env.OBJECTS.put(key, stopped.uncommitted, { httpMetadata: { contentType: "text/x-diff" } });
         const notes = (await objective.events(0, 1000)).filter((e) => e.kind === "note" && e.data !== null && (JSON.parse(e.data) as { task?: string }).task === tid).map((e) => e.text);
         // The outgoing agent's own activity, summarized on Workers AI, so the next model starts where it stopped.
-        const progress = await summarizeProgress(env, objective, setup.who.name, log, stopped.uncommitted).catch(() => []);
+        const progress = await summarizeProgress(env, oid, setup.who.name, log, stopped.uncommitted).catch(() => []);
         notes.push(...progress);
         const handover: Handover = { patch: key, head: stopped.head, notes, by: pid };
         await objective.pause(tid, epoch, JSON.stringify(handover));
@@ -203,7 +216,7 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
  */
 async function summarizeProgress(
   env: Env,
-  objective: DurableObjectStub<import("../objective").ObjectiveDO>,
+  objectiveId: string,
   name: string,
   log: string,
   uncommitted: string,
@@ -229,8 +242,8 @@ async function summarizeProgress(
     { role: "user", content: `${name}'s recent activity:\n${wrapUntrusted(nonce, "activity log", lines || "(no activity recorded)")}\n\nUncommitted files: ${changed || "none"}` },
   ], {
     maxTokens: 400,
-    reserve: (rid: string, micro: number, model: string) => objective.reserveSpend(rid, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)),
-    settle: (rid: string, micro: number) => objective.settleSpend(rid, micro),
+    reserve: (rid: string, micro: number, model: string) => registryStub(env).reserveSpend(rid, objectiveId, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)),
+    settle: (rid: string, micro: number) => registryStub(env).settleSpend(rid, micro),
     metadata: { role: "handover" },
   });
   const parsed = parseJsonReply<{ notes?: unknown[] }>(r.text);

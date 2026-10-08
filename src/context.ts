@@ -22,7 +22,6 @@ export function parseContextFile(path: string, text: string, commit: string): Co
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
       const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
       policy = {
-        ...(strings(raw.columns) ? { columns: strings(raw.columns) } : {}),
         ...(num(raw.agentReviewers) !== undefined ? { agentReviewers: num(raw.agentReviewers) } : {}),
         ...(num(raw.minConfidence) !== undefined ? { minConfidence: num(raw.minConfidence) } : {}),
         ...(strings(raw.protectedPaths) ? { protectedPaths: strings(raw.protectedPaths) } : {}),
@@ -32,7 +31,7 @@ export function parseContextFile(path: string, text: string, commit: string): Co
   const version = Number(meta.version);
   if (!meta.id || !Number.isSafeInteger(version) || version < 1) return null;
   return {
-    id: meta.id, version, kind: meta.kind ?? "note", title: meta.title ?? meta.id, owner: meta.owner ?? "person",
+    id: meta.id, version, kind: meta.kind ?? "note", title: meta.title ?? meta.id, owner: meta.owner ?? "human",
     body, policy, commit, path,
   };
 }

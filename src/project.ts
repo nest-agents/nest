@@ -6,7 +6,7 @@ import { digestOf } from "./protocol";
 import type { Head } from "./domain/accept";
 
 /** Machine-readable block from a context item. Concrete so it crosses Workers RPC with exact types. */
-export type PolicyBlock = { columns?: string[]; agentReviewers?: number; minConfidence?: number; protectedPaths?: string[] };
+export type PolicyBlock = { agentReviewers?: number; minConfidence?: number; protectedPaths?: string[] };
 
 export type ContextItem = {
   id: string;
@@ -60,9 +60,9 @@ export class ProjectDO extends DurableObject<Env> {
 
   private async digests(items: ContextItem[]) {
     const contextDigest = await digestOf(items.map((i) => [i.id, i.version]));
+    // The checks themselves come from the checkpoint's own commit; the policy is the routing item's version.
     const routing = items.find((i) => i.id === "policy/review-routing");
-    const columns = items.find((i) => i.id === "req/export-columns");
-    const policyDigest = await digestOf({ harness: "harbor-checks/1", routing: routing?.version ?? 0, columns: columns?.version ?? 0 });
+    const policyDigest = await digestOf({ routing: routing?.version ?? 0 });
     return { contextDigest, policyDigest };
   }
 
@@ -102,13 +102,7 @@ export class ProjectDO extends DurableObject<Env> {
     }));
   }
 
-  /** Owner-only, for rehearsals. The next bootstrap re-reads the seed repositories. */
-  async reset(): Promise<void> {
-    await this.ctx.storage.deleteAll();
-    this.schema();
-  }
-
-  /** First checkpoint: the seed commit plus the seed context. Idempotent. */
+  /** First checkpoint: the project's code as imported or first pushed, plus any existing context. Idempotent. */
   async bootstrap(commit: string, items: ContextItem[]): Promise<Checkpoint> {
     const existing = this.head();
     if (existing) return existing;
@@ -118,7 +112,7 @@ export class ProjectDO extends DurableObject<Env> {
       for (const i of items) insertItem(this.sql, i, now);
       this.sql.exec(
         "INSERT INTO checkpoints VALUES (1, ?, ?, ?, ?, NULL, ?, ?)",
-        "cp-1", commit, contextDigest, policyDigest, "Seed checkpoint", now,
+        "cp-1", commit, contextDigest, policyDigest, "First checkpoint", now,
       );
     });
     return this.head()!;

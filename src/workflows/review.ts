@@ -6,7 +6,7 @@ import { ArtifactsClient } from "../artifacts";
 import { citeOf } from "../context";
 import { unifiedDiff } from "../diff";
 import { chat, parseJsonReply, type ChatMessage } from "../models";
-import { objectiveStub, projectStub, short } from "../names";
+import { objectiveStub, projectStub, registryStub, short } from "../names";
 import { parseCitation, type Citation, type Verdict } from "../protocol";
 import type { Participant } from "../objective";
 import { boundary, injectionFindings, UNTRUSTED_RULE, wrapUntrusted } from "../untrusted";
@@ -49,10 +49,11 @@ export class ReviewWorkflow extends WorkflowEntrypoint<Env, Params> {
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
     const { objective: objectiveId, contribution: id } = event.payload;
     const objective = objectiveStub(this.env, objectiveId);
-    const project = projectStub(this.env);
 
     const input = await step.do("read the contribution and its context", async () => {
       const state = await objective.state();
+      if (!state.objective.project) throw new Error(`objective ${objectiveId} is not initialized`);
+      const project = projectStub(this.env, state.objective.project);
       const c = state.contributions.find((x) => x.id === id);
       if (!c) throw new Error(`no contribution ${id}`);
       const promptDiff = await contributionDiffInfo(this.env, c.repo, c.parent, c.commit, c.paths);
@@ -110,9 +111,10 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       });
     }
 
+    const ledger = registryStub(this.env);
     const spend = {
-      reserve: (rid: string, micro: number, model: string) => objective.reserveSpend(rid, null, model, micro, Number(this.env.SPEND_CAP_MICRO_USD)),
-      settle: (rid: string, micro: number) => objective.settleSpend(rid, micro),
+      reserve: (rid: string, micro: number, model: string) => ledger.reserveSpend(rid, objectiveId, null, model, micro, Number(this.env.SPEND_CAP_MICRO_USD)),
+      settle: (rid: string, micro: number) => ledger.settleSpend(rid, micro),
     };
 
     // 1. Triage on Workers AI.
@@ -192,7 +194,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
     // 3. Whatever the outcome, the frontier may have changed.
     await step.do("recompose", async () => {
       const bucket = Math.floor(Date.now() / 15_000);
-      try { await this.env.COMPOSE.create({ id: `compose-${bucket}`, params: { objective: objectiveId, reason: `reviewed ${short(id)}` } }); } catch { /* one composition per window */ }
+      try { await this.env.COMPOSE.create({ id: `compose-${objectiveId}-${bucket}`, params: { objective: objectiveId, reason: `reviewed ${short(id)}` } }); } catch { /* one composition per objective per window */ }
     });
     return { reviewed: id };
   }

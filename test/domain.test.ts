@@ -23,7 +23,7 @@ describe("protocol", () => {
     expect(a).not.toBe(await contributionId("nest-ws-01", "t-a-e1", "a".repeat(40)));
   });
   it("parses citations with versions and line ranges", () => {
-    expect(parseCitation("req/export-columns@v2#L3-7")).toEqual({ item: "req/export-columns", version: 2, lines: [3, 7] });
+    expect(parseCitation("req/incident-rule@v2#L3-7")).toEqual({ item: "req/incident-rule", version: 2, lines: [3, 7] });
     expect(parseCitation("dec/0004@v1")).toEqual({ item: "dec/0004", version: 1 });
     expect(parseCitation("req/x@v0")).toBeNull();
     expect(parseCitation("req/x@v2#L9-3")).toBeNull();
@@ -296,7 +296,7 @@ describe("policy floors", () => {
     expect(effectivePolicy({ minConfidence: 0.1 }).minConfidence).toBe(0.5);
   });
   it("does not send every agent change that cites a requirement to a human", () => {
-    const code = { ...subject, paths: ["src/export.ts"], citedItems: ["req/export-columns"] };
+    const code = { ...subject, paths: ["src/incidents.ts"], citedItems: ["req/incident-rule"] };
     const good = ok.map((r) => ({ ...r, confidence: 0.9 }));
     expect(route(DEFAULT_POLICY, code, good).state).toBe("approved");
   });

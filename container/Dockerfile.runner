@@ -1,10 +1,9 @@
-# Runner computer: composes candidates with git and hosts them for checks and previews.
+# Runner computer: composes candidates with git, then runs the project's own setup and checks.
 FROM node:24-trixie-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates git procps \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=docker.io/cloudflare/sandbox:1.0.0 /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
-COPY checks/serve.mjs /trusted/serve.mjs
-RUN chmod 0555 /trusted /trusted/serve.mjs && mkdir -p /workspace
+RUN mkdir -p /workspace
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

@@ -6,20 +6,22 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { candidateBranch, contextRepo, objectiveStub, parseWorkspaceRepo, projectRepo } from "./names";
+import { candidateBranch, contextRepo, parseWorkspaceRepo, projectRepo, registryStub } from "./names";
+import type { CheckSpec } from "./projectconfig";
 import { estimateCost, gatewayHeaders, isPriced, priceFor, providerTarget } from "./models";
 import { receivePackRefs } from "./gitproto";
 
 /**
  * agent: runs a task attempt; pushes only main of its own workspace.
- * runner: composes one candidate, then hosts its code; pushes only cand-<id>, and loses all git access
- *         once candidate code is running.
+ * runner: composes one candidate, then runs the project's checks on it; pushes only cand-<id>, and loses
+ *         all git access once candidate code is running.
  * mirror: fast-forwards the project's main after an acceptance; never runs candidate code.
  * context: commits accepted context versions to the context repo; never runs candidate code.
  */
 export type ComputerProps = {
   computer: string;
   role: "agent" | "runner" | "mirror" | "context";
+  project: string;
   objective: string;
   task?: string;
   epoch?: number;
@@ -247,38 +249,34 @@ export class Computer extends DurableObject<Env> {
     return { ok: true, commit: commit!, tree: tree! };
   }
 
-  /** Hosts the composed candidate with the trusted server; checks and previews talk to it over HTTP. */
-  async serveCandidate(): Promise<{ ok: boolean; detail: string }> {
-    await this.start();
-    const health = async () => {
-      try {
-        const r = await this.container.getTcpPort(8080).fetch("http://container/__nest/health");
-        return { ok: r.ok, detail: await r.text() };
-      } catch (e) {
-        return { ok: false, detail: String(e) };
-      }
-    };
-    const first = await health();
-    if (first.ok) return first;
+  /**
+   * Runs the project's own setup and checks on the composed tree. From here on candidate code runs in
+   * this container, so git access ends first: the checks' results are as trustworthy as the project's own
+   * test suite, which is the trust any CI has. The commands come from the accepted checkpoint's config.
+   */
+  async runChecks(setup: string | null, checks: CheckSpec[]): Promise<{ id: string; status: "PASS" | "FAIL" | "TIMEOUT" | "ERROR"; detail: string; seconds: number }[]> {
     this.ctx.storage.kv.put("phase", "host");
     this.tokens.clear();
-    await this.container.exec(["/bin/sh", "-c", `setsid node /trusted/serve.mjs ${REPO_DIR} 8080 >/workspace/serve.log 2>&1 &`], { cwd: "/workspace", env: { HOME: "/root" }, stdout: "ignore", stderr: "ignore" });
-    for (let i = 0; i < 60; i++) {
-      const h = await health();
-      if (h.ok || /failed to load/i.test(h.detail)) return h;
-      await new Promise((r) => setTimeout(r, 250));
+    const env = { CI: "true", npm_config_update_notifier: "false", npm_config_fund: "false", npm_config_audit: "false" };
+    const run = async (command: string, timeoutSeconds: number) => {
+      const started = Date.now();
+      const r = await this.exec(["bash", "-lc", command], REPO_DIR, env, timeoutSeconds).catch((e) => ({ exitCode: -1, stdout: "", stderr: String(e) }));
+      const tail = `${r.stdout}\n${r.stderr}`.trim().split("\n").slice(-25).join("\n").slice(-2500);
+      return { exitCode: r.exitCode, tail, seconds: Math.round((Date.now() - started) / 1000) };
+    };
+    const out: { id: string; status: "PASS" | "FAIL" | "TIMEOUT" | "ERROR"; detail: string; seconds: number }[] = [];
+    if (setup) {
+      const s = await run(setup, 600);
+      if (s.exitCode !== 0) {
+        const status = s.exitCode === 124 ? "TIMEOUT" : "ERROR";
+        return checks.map((c) => ({ id: c.id, status, detail: `setup (${setup}) failed: ${s.tail}`, seconds: 0 }));
+      }
     }
-    return { ok: false, detail: ((await this.readText("/workspace/serve.log")) ?? "server did not start").slice(-1500) };
-  }
-
-  async serve(request: Request): Promise<Response> {
-    if (!this.container.running) return new Response("This preview is asleep. Reopen it from Nest to start it again.", { status: 503 });
-    return this.container.getTcpPort(8080).fetch(request);
-  }
-
-  async fileSha256(path: string): Promise<string | null> {
-    const r = await this.sh(`sha256sum ${q(path)} | cut -d' ' -f1`);
-    return r.exitCode === 0 ? r.stdout.trim() : null;
+    for (const c of checks) {
+      const r = await run(c.run, c.timeoutSeconds);
+      out.push({ id: c.id, status: r.exitCode === 0 ? "PASS" : r.exitCode === 124 ? "TIMEOUT" : "FAIL", detail: r.exitCode === 0 ? `${c.run} passed in ${r.seconds} s` : r.tail || `${c.run} exited ${r.exitCode}`, seconds: r.seconds });
+    }
+    return out;
   }
 
   private async readText(path: string): Promise<string | undefined> {
@@ -301,6 +299,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     if (url.hostname === "nest.internal") return this.nest(request, url, props);
     if (url.protocol !== "https:") return deny(`${url.hostname} is reachable only over HTTPS`);
     if (url.hostname === `${this.env.ACCOUNT_ID}.artifacts.cloudflare.net`) return this.git(request, url, props);
+    if (url.hostname === "registry.npmjs.org") return this.packages(request, url, props);
     if (url.hostname === "gateway.ai.cloudflare.com" && url.pathname.startsWith(`/v1/${this.env.ACCOUNT_ID}/${this.env.AI_GATEWAY_ID}/`)) return this.model(request, url, props);
     return deny(`${url.hostname} is not reachable from a Nest computer`);
   }
@@ -320,8 +319,8 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     if (!shape) return deny("unsupported git request");
     const pushing = shape === "push" || shape === "advertise-push";
     const ws = parseWorkspaceRepo(repo);
-    const isProject = repo === projectRepo(this.env);
-    const isContext = repo === contextRepo(this.env);
+    const isProject = repo === projectRepo(props.project);
+    const isContext = repo === contextRepo(props.project);
     const computer = this.env.COMPUTERS.getByName(props.computer);
 
     // Which repositories this computer may read, and the single ref it may update.
@@ -336,15 +335,15 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
         // Git only while explicitly composing; hosting, or any unknown state, has no git access.
         if ((await computer.phase()) !== "compose") return deny("this computer has no git access outside composition");
         readable = isProject || !!ws;
-        pushRef = props.candidate ? { repo: projectRepo(this.env), ref: `refs/heads/${candidateBranch(props.candidate)}` } : null;
+        pushRef = props.candidate ? { repo: projectRepo(props.project), ref: `refs/heads/${candidateBranch(props.candidate)}` } : null;
         break;
       case "mirror":
         readable = isProject;
-        pushRef = { repo: projectRepo(this.env), ref: "refs/heads/main" };
+        pushRef = { repo: projectRepo(props.project), ref: "refs/heads/main" };
         break;
       case "context":
         readable = isContext;
-        pushRef = { repo: contextRepo(this.env), ref: "refs/heads/main" };
+        pushRef = { repo: contextRepo(props.project), ref: "refs/heads/main" };
         break;
     }
     if (!pushing && !readable) return deny(`${repo} is not readable from this computer`);
@@ -362,6 +361,21 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     headers.delete("authorization");
     headers.set("authorization", `Bearer ${secret}`);
     return fetch(new Request(url, { method: request.method, headers, body: body ?? (request.method === "GET" ? undefined : request.body) }));
+  }
+
+  /**
+   * Public packages from the npm registry, read-only, so a project's setup can install its dependencies.
+   * Agents and runners only; nothing is sent there but GET requests without credentials.
+   */
+  private async packages(request: Request, url: URL, props: ComputerProps): Promise<Response> {
+    if (props.role !== "agent" && props.role !== "runner") return deny("only agent and runner computers may install packages");
+    if (request.method !== "GET" && request.method !== "HEAD") return deny("the package registry is read-only from Nest computers");
+    const headers = new Headers();
+    for (const h of ["accept", "accept-encoding", "user-agent", "npm-command", "if-none-match"]) {
+      const v = request.headers.get(h);
+      if (v) headers.set(h, v);
+    }
+    return fetch(new Request(url, { method: request.method, headers }));
   }
 
   private async model(request: Request, url: URL, props: ComputerProps): Promise<Response> {
@@ -400,10 +414,10 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
       parsed.tools = (parsed.tools as { type?: unknown }[]).filter((t) => !PAID.test(String(t?.type ?? "")));
     }
     const bodyText = JSON.stringify(parsed);
-    const objective = objectiveStub(this.env, props.objective);
+    const ledger = registryStub(this.env);
     const reservation = `${props.computer}-${crypto.randomUUID()}`;
     const estimate = estimateCost(model, Math.ceil(bodyText.length / 3), maxOut);
-    const allowed = await objective.reserveSpend(reservation, props.task ?? null, model, estimate, Number(this.env.SPEND_CAP_MICRO_USD));
+    const allowed = await ledger.reserveSpend(reservation, props.objective, props.task ?? null, model, estimate, Number(this.env.SPEND_CAP_MICRO_USD));
     if (!allowed) return new Response(JSON.stringify({ error: { message: "Nest spend cap reached" } }), { status: 429, headers: { "content-type": "application/json" } });
     const headers = new Headers(request.headers);
     headers.delete("authorization");
@@ -418,7 +432,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
     if (!upstream.body) return upstream;
     // Settle with the provider's reported usage when it appears in the stream; otherwise the estimate stands.
     const [toClient, toMeter] = upstream.body.tee();
-    this.ctx.waitUntil(meter(toMeter, model).then((actual) => (actual === null ? undefined : objective.settleSpend(reservation, actual))));
+    this.ctx.waitUntil(meter(toMeter, model).then((actual) => (actual === null ? undefined : ledger.settleSpend(reservation, actual))));
     return new Response(toClient, { status: upstream.status, headers: upstream.headers });
   }
 

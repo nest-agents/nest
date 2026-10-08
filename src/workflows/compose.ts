@@ -1,41 +1,68 @@
-// ComposeWorkflow: assemble the frontier of candidate outcomes with real git, check each one as a whole
-// from outside its container, open a live preview, and turn failures into repair tasks.
+// ComposeWorkflow: assemble the frontier of candidate outcomes with real git, run the project's own checks
+// on each one as a whole in a fresh runner, wait for the outcome's preview deployment and open it in a real
+// browser, and turn regressions into repair tasks. One composer runs per objective at a time.
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { ArtifactsClient } from "../artifacts";
-import { exportByClick } from "../checks/browser";
-import { HARBOR_CHECKS, runHarborChecks } from "../checks/harbor";
-import { candidateBranch, objectiveStub, projectRepo, projectStub, short } from "../names";
+import { smokeCheck } from "../checks/browser";
+import { artifactsRemote, candidateBranch, objectiveStub, projectRepo, projectStub, short } from "../names";
+import type { ObjectiveDO } from "../objective";
+import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
+import { readProjectConfig } from "../projects";
 import { sha256Hex } from "../protocol";
 
 /** `only` recomposes exactly these outcomes (an owner's request), instead of the planner's top three. */
 type Params = { objective: string; reason?: string; only?: string[] };
+type Check = { id: string; status: string; detail: string };
 
-const remoteOf = (env: Env, repo: string) => `https://${env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${env.ARTIFACTS_NAMESPACE}/${repo}.git`;
+/** Probes 30 seconds apart, so a preview build gets ten minutes to appear. */
+const PREVIEW_PROBES = 20;
 
 export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
     const objectiveId = event.payload.objective;
     const objective = objectiveStub(this.env, objectiveId);
-    const project = projectStub(this.env);
-    const artifacts = new ArtifactsClient(this.env.ARTIFACTS);
+    // Composers that start while one is running leave a note instead; the running one composes again.
+    const mine = await step.do("claim the composer", async () => objective.claimComposer(event.instanceId));
+    if (!mine) return { deferred: true };
+    try {
+      return await this.compose(event, step, objective);
+    } finally {
+      await step.do("release the composer", async () => {
+        const again = await objective.releaseComposer(event.instanceId);
+        if (again) {
+          await this.env.COMPOSE.create({ id: `compose-${objectiveId}-${Date.now()}`, params: { objective: objectiveId, reason: "work arrived while composing" } }).catch(() => undefined);
+        }
+        return { again };
+      });
+    }
+  }
+
+  private async compose(event: WorkflowEvent<Params>, step: WorkflowStep, objective: DurableObjectStub<ObjectiveDO>) {
+    const env = this.env;
+    const objectiveId = event.payload.objective;
 
     const plan = await step.do("plan the frontier", async () => {
-      const head = await project.head();
-      const checkpoints = await project.checkpoints();
-      const context = await project.context();
       const state = await objective.state();
+      const projectId = state.objective.project;
+      if (!projectId) throw new Error(`objective ${objectiveId} is not initialized`);
+      const head = await projectStub(env, projectId).head();
       if (!head) throw new Error("not bootstrapped");
+      let config: ProjectConfig | null = null;
+      let configError: string | null = null;
+      try {
+        config = await readProjectConfig(env, projectId, head.commit);
+      } catch (e) {
+        if (!(e instanceof ConfigError)) throw e;
+        configError = e.message;
+      }
       const accepted = state.contributions.filter((c) => c.status === "accepted").map((c) => c.id);
       const frontier = await objective.frontier(accepted, 4);
-      const columns = ((context.find((i) => i.id === "req/export-columns")?.policy as { columns?: string[] } | null)?.columns) ?? [];
-      const seed = await artifacts.readBytes(projectRepo(this.env), checkpoints[0]!.commit, "src/data.ts");
       const byId = new Map(state.contributions.map((c) => [c.id, c]));
       const planned = [];
       const only = event.payload.only?.length ? new Set(event.payload.only) : null;
       if (only) {
         for (const k of state.candidates.filter((x) => only.has(x.id) && x.baseVersion === head.version))
-          planned.push({ id: k.id, name: k.name, order: k.order, choice: k.choice, ready: false, reusedAcross: [] as string[] });
+          planned.push({ id: k.id, name: k.name, order: k.order, choice: k.choice, reusedAcross: [] as string[] });
       }
       for (const f of only ? [] : frontier.slice(0, 3)) {
         const id = `k${(await sha256Hex(`${head.version}|${head.contextDigest}|${f.order.join(",")}`)).slice(0, 10)}`;
@@ -45,159 +72,182 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           const chosenTasks = Object.values(f.choice).map((x) => byId.get(x)?.task);
           return c && !c.alternative && chosenTasks.length && !chosenTasks.includes(c.task) && state.contributions.some((o) => o.task === c.task && o.alternative && !f.order.includes(o.id));
         });
-        planned.push({ id, name, order: f.order, choice: f.choice, ready: f.ready, reusedAcross });
+        planned.push({ id, name, order: f.order, choice: f.choice, reusedAcross });
       }
       return {
+        project: projectId,
         head: { version: head.version, commit: head.commit, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
-        columns, dataSha256: seed ? await sha256Hex(seed) : "", planned,
+        config, configError, planned,
         picks: Object.fromEntries(state.contributions.map((c) => [c.id, { repo: c.repo, commit: c.commit, title: c.title, author: c.author, status: c.status }])),
         existing: state.candidates.map((c) => ({ id: c.id, status: c.status })),
       };
     });
 
+    /** Composes `order` onto the head in a fresh runner, runs the project's own setup and checks, and destroys the runner. */
+    const runOn = async (id: string, order: string[]) => {
+      const name = `runner-${id}`;
+      const computer = env.COMPUTERS.getByName(name);
+      try {
+        const result = await computer.compose(
+          { computer: name, role: "runner", project: plan.project, objective: objectiveId, candidate: id },
+          { remote: artifactsRemote(env, projectRepo(plan.project)), commit: plan.head.commit },
+          order.map((cid) => ({ id: cid, remote: artifactsRemote(env, plan.picks[cid]!.repo), commit: plan.picks[cid]!.commit })),
+          candidateBranch(id),
+        );
+        if (!result.ok) return { result, checks: [] as Check[] };
+        const composed: Check = {
+          id: "compose", status: "PASS",
+          detail: order.length ? `${order.length} contributions cherry-picked onto checkpoint ${plan.head.version} without conflicts` : `checkpoint ${plan.head.version} as accepted`,
+        };
+        const ran: Check[] = plan.config
+          ? (await computer.runChecks(plan.config.setup, plan.config.checks)).map(({ id: cid, status, detail }) => ({ id: cid, status, detail }))
+          : [{ id: "config", status: "ERROR", detail: `${CONFIG_PATH} at checkpoint ${plan.head.version}: ${plan.configError}` }];
+        return { result, checks: [composed, ...ran] };
+      } finally {
+        await computer.destroy("checks finished").catch(() => undefined);
+      }
+    };
+
+    /**
+     * The project deploys every branch Nest pushes as a preview (Workers Builds does this for a Worker
+     * connected to the repository). Wait for the outcome's own deployment, then open it in a real browser.
+     */
+    const previewCheck = async (id: string): Promise<Check | null> => {
+      if (!plan.config?.preview) return null;
+      const url = previewUrl(plan.config, candidateBranch(id));
+      if (!url) return { id: "preview", status: "ERROR", detail: `no preview URL for branch ${candidateBranch(id)}` };
+      let answered = 0;
+      for (let i = 0; i < PREVIEW_PROBES && !answered; i++) {
+        if (i) await step.sleep(`preview ${id}: wait ${i}`, "30 seconds");
+        answered = await step.do(`preview ${id}: probe ${i}`, async () => {
+          const r = await fetch(url, { redirect: "manual", headers: { "user-agent": "Nest preview probe" } }).catch(() => null);
+          return r && r.status < 400 ? r.status : 0;
+        });
+      }
+      if (!answered) return { id: "preview", status: "FAIL", detail: `no deployment answered at ${url} within ${PREVIEW_PROBES / 2} minutes of the push` };
+      return step.do(`preview ${id}: open in a browser`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "3 minutes" }, async () => {
+        const r = await smokeCheck(env, url);
+        if (r.screenshot) await env.OBJECTS.put(`shots/${id}.png`, r.screenshot, { httpMetadata: { contentType: "image/png" } });
+        return { id: r.check.id, status: r.check.status, detail: `${url} ${r.check.detail}` };
+      });
+    };
+
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
     // unfinished; one that fails a check the checkpoint passes has broken something.
-    // The key names the check set too, so adding a check re-measures the checkpoint.
-    const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}:${[...HARBOR_CHECKS, "export-click"].length}`;
-    // Generous retries: right after a deploy, Durable Objects can run the previous code for a minute or more.
-    const baseline = await step.do(`measure checkpoint ${plan.head.version}`, { retries: { limit: 5, delay: "20 seconds", backoff: "linear" }, timeout: "10 minutes" }, async () => {
-      const known = await objective.baseline(baselineKey);
-      if (known) return known;
-      const id = `base-${plan.head.version}-${plan.head.commit.slice(0, 10)}-${plan.head.contextDigest.slice(0, 6)}`;
-      const computerName = `runner-${id}`;
-      const computer = this.env.COMPUTERS.getByName(computerName);
-      try {
-        const composed = await computer.compose(
-          { computer: computerName, role: "runner", objective: objectiveId, candidate: id },
-          { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit }, [], candidateBranch(id),
-        );
-        if (!composed.ok) return [];
-        const served = await computer.serveCandidate();
-        if (!served.ok) return [];
-        const data = await artifacts.readBytes(projectRepo(this.env), plan.head.commit, "src/data.ts");
-        const call = (path: string, viewer: string | null, method = "GET") =>
-          computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
-        const checks = [
-          ...(await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, data ? await sha256Hex(data) : "missing", 25_000)),
-          (await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method))).check,
-        ];
-        await objective.setBaseline(baselineKey, checks);
-        await objective.log("Sandbox", "baseline", `Checkpoint ${plan.head.version} passes ${checks.filter((k) => k.status === "PASS").length} of ${checks.length} checks on its own`);
-        return checks;
-      } finally {
-        await computer.destroy("baseline measured").catch(() => undefined);
-      }
-    });
-    const passingAtHead = new Set(baseline.filter((k) => k.status === "PASS").map((k) => k.id));
+    const checkSet = plan.config ? requiredChecks(plan.config) : ["compose", "config"];
+    const baselineKey = `${plan.head.version}:${plan.head.contextDigest.slice(0, 16)}:${checkSet.join(",")}`;
+    const baselineId = `b${(await sha256Hex(`${objectiveId}|${baselineKey}|${plan.head.commit}`)).slice(0, 10)}`;
+    let baseline: Check[] | null = await step.do(`checkpoint ${plan.head.version}: known baseline`, async () => objective.baseline(baselineKey));
+    if (!baseline) {
+      const own = await step.do(`checkpoint ${plan.head.version}: compose and check`, { retries: { limit: 3, delay: "30 seconds", backoff: "linear" }, timeout: "30 minutes" }, async () => {
+        const r = await runOn(baselineId, []);
+        if (!r.result.ok) throw new Error(`checkpoint ${plan.head.version} did not check out on its own: ${r.result.detail.slice(0, 300)}`);
+        return r.checks;
+      });
+      const preview = await previewCheck(baselineId);
+      const measured = [...own, ...(preview ? [preview] : [])];
+      await step.do(`checkpoint ${plan.head.version}: record baseline`, async () => {
+        await objective.setBaseline(baselineKey, measured);
+        await objective.log("Sandbox", "baseline", `Checkpoint ${plan.head.version} passes ${measured.filter((k) => k.status === "PASS").length} of ${measured.length} checks on its own`);
+      });
+      baseline = measured;
+    }
+    const base = baseline;
+    const passingAtHead = new Set(base.filter((k) => k.status === "PASS").map((k) => k.id));
 
     // A context change can make the accepted checkpoint itself fall short: what passed when it was accepted
     // fails under the new requirements. That is a regression of the head, repaired from the head's own tree.
     await step.do(`regressions of checkpoint ${plan.head.version}`, async () => {
       const state = await objective.state();
       const accepted = state.candidates.find((x) => x.status === "accepted" && x.commit === plan.head.commit);
-      if (!accepted || !baseline.length) return { regressed: [] };
-      const regressed = baseline.filter((k) => k.status !== "PASS" && accepted.checks.some((a) => a.id === k.id && a.status === "PASS"));
+      if (!accepted) return { regressed: [] };
+      const regressed = base.filter((k) => k.status !== "PASS" && accepted.checks.some((a) => a.id === k.id && a.status === "PASS"));
       if (regressed.length)
-        await openRepair(this.env, objective, `h${plan.head.commit.slice(0, 10)}`, `checkpoint ${plan.head.version}`,
+        await openRepair(env, objectiveId, `h${plan.head.commit.slice(0, 10)}`, `checkpoint ${plan.head.version}`,
           `${event.payload.reason ? `After ${event.payload.reason}, ` : ""}checks that passed when it was accepted now fail:\n${regressed.map((f) => `${f.id}: ${f.detail}`).join("\n")}`,
           plan.head.commit, plan.head.version);
       return { regressed: regressed.map((k) => k.id) };
     });
 
-    if (!plan.planned.length) return { composed: 0 };
+    const atHead = new Map(base.map((k) => [k.id, k.status]));
+    const withHead = (checks: Check[]) => checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null }));
 
-    await Promise.all(plan.planned.map((c) =>
-      step.do(`compose ${c.id}`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "10 minutes" }, async () => {
-        const prior = plan.existing.find((e) => e.id === c.id);
-        if (prior && !["composing", "outdated"].includes(prior.status)) return { skipped: prior.status };
-        if (!(await objective.claimComposition(c.id, event.instanceId))) return { skipped: "another composer has it" };
-        try {
-          return await composeOne.call(this, c);
-        } finally {
-          await objective.releaseComposition(c.id, event.instanceId);
-        }
-      }),
-    ));
-    return { composed: plan.planned.length };
+    const verify = async (c: (typeof plan.planned)[number]) => {
+      const prior = plan.existing.find((e) => e.id === c.id);
+      if (prior && !["composing", "checking", "outdated"].includes(prior.status)) return { id: c.id, skipped: prior.status };
 
-    // Hoisted, and called with the workflow as `this`; everything it closes over is set before it runs.
-    async function composeOne(this: ComposeWorkflow, c: (typeof plan.planned)[number]) {
-      const note = c.reusedAcross.length
-        ? `Keeps ${c.reusedAcross.map((id) => `${short(id)} ${plan.picks[id]?.title ?? ""}`).join(", ")} from an approach that was not chosen.`
-        : null;
-      await objective.upsertCandidate({
-        id: c.id, name: c.name, baseVersion: plan.head.version, baseCommit: plan.head.commit, contextDigest: plan.head.contextDigest,
-        policyDigest: plan.head.policyDigest, order: c.order, choice: c.choice, status: "composing", commit: null, checks: [],
-        previewReady: false, note, conflict: null,
-      });
-      await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
-      const computerName = `runner-${c.id}`;
-      const computer = this.env.COMPUTERS.getByName(computerName);
-      const result = await computer.compose(
-        { computer: computerName, role: "runner", objective: objectiveId, candidate: c.id },
-        { remote: remoteOf(this.env, projectRepo(this.env)), commit: plan.head.commit },
-        c.order.map((id) => ({ id, remote: remoteOf(this.env, plan.picks[id]!.repo), commit: plan.picks[id]!.commit })),
-        candidateBranch(c.id),
-      );
-      // A conflict names the files git could not merge. Anything else (clone, fetch, push) is ours: retry.
-      if (!result.ok && (!result.paths.length || ["clone", "base", "push"].includes(result.at))) throw new Error(`composition failed at ${result.at}: ${result.detail.slice(0, 300)}`);
-      if (!result.ok) {
-        if (result.partial && /^[0-9a-f]{40}$/.test(result.partial)) {
-          const before = c.order.slice(0, Math.max(0, c.order.indexOf(result.at)));
-          if (before.length) await objective.recordMaterialization(result.partial, before);
-          await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
+      const composed = await step.do(`compose ${c.id}`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "30 minutes" }, async () => {
+        const note = c.reusedAcross.length
+          ? `Keeps ${c.reusedAcross.map((id) => `${short(id)} ${plan.picks[id]?.title ?? ""}`).join(", ")} from an approach that was not chosen.`
+          : null;
+        await objective.upsertCandidate({
+          id: c.id, name: c.name, baseVersion: plan.head.version, baseCommit: plan.head.commit, contextDigest: plan.head.contextDigest,
+          policyDigest: plan.head.policyDigest, order: c.order, choice: c.choice, status: "composing", commit: null, checks: [],
+          previewReady: false, note, conflict: null,
+        });
+        await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
+        const r = await runOn(c.id, c.order);
+        const result = r.result;
+        // A conflict names the files git could not merge. Anything else (clone, fetch, push) is ours: retry.
+        if (!result.ok && (!result.paths.length || ["clone", "base", "push"].includes(result.at))) throw new Error(`composition failed at ${result.at}: ${result.detail.slice(0, 300)}`);
+        if (!result.ok) {
+          if (result.partial && /^[0-9a-f]{40}$/.test(result.partial)) {
+            const before = c.order.slice(0, Math.max(0, c.order.indexOf(result.at)));
+            if (before.length) await objective.recordMaterialization(result.partial, before);
+            await objective.setConflictBasis(c.id, { commit: result.partial, at: result.at, before });
+          }
+          const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
+          // git's own advice ("hint: ...") is for a terminal, not for the human deciding.
+          const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
+          await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
+          // A real overlap is a choice for a human, not a bug for an agent to rewrite.
+          await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
+          return { ok: false as const };
         }
-        const detail = `Cherry-picking ${short(result.at)} conflicted${result.paths.length ? ` in ${result.paths.join(", ")}` : ""}`;
-        // git's own advice ("hint: ...") is for a terminal, not for the human deciding.
-        const gitSays = result.detail.split("\n").filter((l) => l.trim() && !/^hint:/.test(l.trim())).join(" ").slice(0, 400);
-        await objective.updateCandidate(c.id, { status: "conflict", conflict: `${detail}. ${gitSays}`.slice(0, 1500) }, { svc: "Sandbox", text: `${c.name}: ${detail}` });
-        // A real overlap is a choice for a human, not a bug for an agent to rewrite.
-        await objective.openInbox({ id: `conflict-${c.id}`, kind: "conflict", target: c.id, reasons: [`${detail}. Choose which contribution to keep, or start a task to reconcile them.`] });
-        return { conflict: result.at };
-      }
-      await objective.recordMaterialization(result.commit, c.order);
-      await objective.resolveInbox(`conflict-${c.id}`, "composed cleanly");
-      await objective.log("Sandbox", "candidate", `Cherry-picked ${c.order.length} contributions onto checkpoint ${plan.head.version} with real git`, { candidate: c.id, commit: result.commit });
-      const served = await computer.serveCandidate();
-      const candidateData = await artifacts.readBytes(projectRepo(this.env), result.commit, "src/data.ts");
-      const actual = candidateData ? await sha256Hex(candidateData) : "missing";
-      const call = (path: string, viewer: string | null, method = "GET") =>
-        computer.serve(new Request(new URL(path, "http://candidate"), { method, headers: viewer ? { "x-harbor-viewer": viewer } : {} }));
-      const checks: { id: string; status: string; detail: string }[] = served.ok
-        ? await runHarborChecks(call, { columns: plan.columns, dataSha256: plan.dataSha256 }, actual, 25_000)
-        : HARBOR_CHECKS.map((id) => ({ id, status: "ERROR" as const, detail: `candidate did not start: ${served.detail}`.slice(0, 500) }));
-      if (served.ok) {
-        // A real browser clicks the button on the live preview; the screenshot goes on the outcome card.
-        const click = await exportByClick(this.env, `${this.env.PUBLIC_URL}/preview/${c.id}/`, plan.columns, (path, viewer, method) => call(path, viewer, method));
-        checks.push(click.check);
-        if (click.screenshot) await this.env.OBJECTS.put(`shots/${c.id}.png`, click.screenshot, { httpMetadata: { contentType: "image/png" } });
-      }
-      const failed = checks.filter((x) => x.status !== "PASS");
-      const state = await objective.state();
-      const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
-      const broken = failed.filter((f) => passingAtHead.has(f.id));
-      const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
-      const atHead = new Map(baseline.map((k) => [k.id, k.status]));
-      await objective.updateCandidate(c.id, { status, commit: result.commit, checks: checks.map((k) => ({ ...k, atHead: atHead.get(k.id) ?? null })), previewReady: served.ok, conflict: null }, {
-        svc: "Sandbox",
-        text: `Trusted checks on ${c.name}: ${checks.length - failed.length} of ${checks.length} passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
+        await objective.recordMaterialization(result.commit, c.order);
+        await objective.resolveInbox(`conflict-${c.id}`, "composed cleanly");
+        const passed = r.checks.filter((k) => k.status === "PASS").length;
+        await objective.updateCandidate(c.id, { status: "checking", commit: result.commit, checks: withHead(r.checks), conflict: null }, {
+          svc: "Sandbox",
+          text: `Composed ${c.name} with real git and ran the project's checks: ${passed} of ${r.checks.length} passed${plan.config?.preview ? "; waiting for its preview deployment" : ""}`,
+        });
+        return { ok: true as const, commit: result.commit, checks: r.checks };
       });
-      if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
-      // Repair regressions only: a check that passed for this same selection of work before (for example
-      // under an older requirement version) and fails now. An unfinished objective is not a regression.
-      const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
-      const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
-      if (failed.length && membersApproved && served.ok && regressed.length) {
-        await openRepair(this.env, objective, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), result.commit, plan.head.version);
-      }
-      return { status };
-    }
+      if (!composed.ok) return { id: c.id, conflict: true };
+
+      const preview = await previewCheck(c.id);
+
+      return step.do(`settle ${c.id}`, async () => {
+        const checks = [...composed.checks, ...(preview ? [preview] : [])];
+        const failed = checks.filter((x) => x.status !== "PASS");
+        const state = await objective.state();
+        const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
+        const broken = failed.filter((f) => passingAtHead.has(f.id));
+        const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
+        await objective.updateCandidate(c.id, { status, commit: composed.commit, checks: withHead(checks), previewReady: preview?.status === "PASS", conflict: null }, {
+          svc: preview ? "Browser Rendering" : "Sandbox",
+          text: `${c.name}: ${checks.length - failed.length} of ${checks.length} checks passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,
+        });
+        if (status === "ready") await objective.openInbox({ id: `accept-${c.id}`, kind: "accept", target: c.id, reasons: [`${c.name} is ready to accept`] });
+        // Repair regressions only: a check that passed for this same selection of work before (for example
+        // under an older requirement version) and fails now. An unfinished objective is not a regression.
+        const before = state.candidates.filter((x) => x.id !== c.id && x.order.join(",") === c.order.join(",") && x.checks.length);
+        const regressed = failed.filter((f) => before.some((b) => b.checks.some((k) => k.id === f.id && k.status === "PASS")));
+        if (failed.length && membersApproved && regressed.length) {
+          await openRepair(env, objectiveId, c.id, c.name, regressed.map((f) => `${f.id}: ${f.detail}`).join("\n"), composed.commit, plan.head.version);
+        }
+        return { id: c.id, status };
+      });
+    };
+
+    const results = await Promise.all(plan.planned.map(verify));
+    return { composed: results.length, results };
   }
 }
 
 /**
  * Names an outcome the way a human would: the approach it takes and who built it, for example
- * "Direct CSV export, by Heron and Wren". Without a chosen approach it falls back to the work itself.
+ * "Consecutive-failure incidents, by Heron and Wren". Without a chosen approach it falls back to the work itself.
  */
 function outcomeName(members: { task: string | null; author: string; title: string }[], approaches: { task: string | null }[], state: { tasks: { id: string; title: string }[]; participants: { id: string; name: string }[] }): string {
   const nameOf = (id: string) => state.participants.find((p) => p.id === id)?.name ?? id;
@@ -212,18 +262,19 @@ function outcomeName(members: { task: string | null; author: string; title: stri
   return `${what}, by ${by}`;
 }
 
-/** A failing or conflicting outcome becomes a task. The repair builds on the composed tree itself. */
-async function openRepair(env: Env, objective: DurableObjectStub<import("../objective").ObjectiveDO>, candidateId: string, name: string, detail: string, baseCommit: string, baseVersion: number) {
+/** A failing outcome becomes a task. The repair builds on the composed tree itself. */
+async function openRepair(env: Env, objectiveId: string, candidateId: string, name: string, detail: string, baseCommit: string, baseVersion: number) {
+  const objective = objectiveStub(env, objectiveId);
   const id = `t_repair-${candidateId.slice(1, 9)}`;
   const existing = await objective.task(id);
   if (existing) return;
   await objective.createTask({
     id, title: `Repair ${name.replace(/^Outcome: /, "")}`, baseVersion, baseCommit,
-    brief: `${candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`} fails:\n${detail}\n\nYour workspace starts from that exact tree. Make the smallest change that makes it satisfy the current requirements, run the tests, commit with the Nest trailers and publish.`,
+    brief: `${candidateId.startsWith("h") ? `The accepted ${name}` : `The composed outcome ${candidateId}`} fails:\n${detail}\n\nYour workspace starts from that exact tree. Make the smallest change that makes it satisfy the current requirements, run the checks, commit with the Nest trailers and publish.`,
   });
   // One automatic repair at a time: a cascade is impossible whatever else goes wrong.
   if (env.AUTO_REPAIR_AGENT && !(await objective.repairRunning())) {
     const { startTask } = await import("../tasks");
-    await startTask(env, id, env.AUTO_REPAIR_AGENT, "agent").catch((e) => objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`));
+    await startTask(env, objectiveId, id, env.AUTO_REPAIR_AGENT, "agent").catch((e) => objective.log("Workflows", "repair", `Could not start the repair automatically: ${String(e).slice(0, 200)}`));
   }
 }

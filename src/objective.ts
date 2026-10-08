@@ -8,6 +8,7 @@ import { route, effectivePolicy, type ReviewFact, type ReviewPolicy, type Routin
 
 type Row = Record<string, string | number | null>;
 
+/** A copy of the registry's participant, so reviews and routing never leave this object. */
 export type Participant = { id: string; kind: ParticipantKind; name: string; family: string; model: string; harness: string };
 export type Task = {
   id: string; title: string; brief: string; alternative: string | null; status: string; epoch: number;
@@ -84,7 +85,6 @@ export class ObjectiveDO extends DurableObject<Env> {
         commit_sha TEXT, checks TEXT NOT NULL, preview_ready INTEGER NOT NULL, note TEXT, conflict TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS inbox(id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, reasons TEXT NOT NULL, status TEXT NOT NULL,
         created_at TEXT NOT NULL, resolution TEXT);
-      CREATE TABLE IF NOT EXISTS spend(id TEXT PRIMARY KEY, task TEXT, model TEXT NOT NULL, reserved INTEGER NOT NULL, actual INTEGER, state TEXT NOT NULL, at TEXT NOT NULL);
     `);
     this.migrate();
   }
@@ -147,20 +147,14 @@ export class ObjectiveDO extends DurableObject<Env> {
     this.sql.exec("INSERT INTO meta VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", k, v);
   }
 
-  /** Random per initialization; part of workspace names and tokens so a reset invalidates both. */
+  /** Random per objective; part of workspace names and tokens, so neither can ever map onto another objective. */
   generation(): string {
     const g = this.meta("generation");
     if (!g) throw new ObjectiveError("NOT_INITIALIZED");
     return g;
   }
 
-  /** Swarm objectives measure throughput: no reviews or composition are started for their contributions. */
-  isSwarm(): boolean {
-    return this.meta("mode") === "swarm";
-  }
-
-  init(input: { id: string; title: string; criteria: string[]; project: string; policy?: ReviewPolicy; mode?: "swarm" }): { id: string; title: string } {
-    if (input.mode) this.setMeta("mode", input.mode);
+  init(input: { id: string; title: string; criteria: string[]; project: string; policy?: ReviewPolicy }): { id: string; title: string } {
     if (!this.meta("generation")) this.setMeta("generation", crypto.randomUUID().replaceAll("-", "").slice(0, 8));
     if (!this.meta("objective")) {
       this.setMeta("objective", input.id);
@@ -289,12 +283,6 @@ export class ObjectiveDO extends DurableObject<Env> {
     return { task: String(r.task), epoch: Number(r.epoch), participant: String(r.participant), current: Number(r.cur) === Number(r.epoch) && String(r.status) === "running" };
   }
 
-  /** Registered contributions with their creation times, for throughput measurement. */
-  registrations(): { id: string; task: string | null; createdAt: string }[] {
-    return this.sql.exec<Row>("SELECT id, task, created_at FROM contributions ORDER BY seq").toArray()
-      .map((r) => ({ id: String(r.id), task: r.task ? String(r.task) : null, createdAt: String(r.created_at) }));
-  }
-
   attempts(taskId: string) {
     return this.sql.exec<Row>("SELECT * FROM attempts WHERE task = ? ORDER BY epoch", taskId).toArray();
   }
@@ -361,22 +349,30 @@ export class ObjectiveDO extends DurableObject<Env> {
   }
 
   /**
-   * One composer per outcome. Composition workflows overlap (each review can start one), and two of them
-   * composing the same outcome share its runner computer and corrupt each other's working tree.
+   * One composer per objective. Composers share runner names and baselines, so two at once would race.
+   * A composer that finds one running records that more work arrived; the running one composes again.
    */
-  claimComposition(candidateId: string, owner: string, leaseMs = 12 * 60_000): boolean {
+  claimComposer(owner: string, leaseMs = 60 * 60_000): boolean {
     const now = Date.now();
-    const held = this.meta(`compose:${candidateId}`);
+    const held = this.meta("composer");
     if (held) {
       const [who, at] = held.split("@");
-      if (who !== owner && now - Number(at) < leaseMs) return false;
+      if (who !== owner && now - Number(at) < leaseMs) {
+        this.setMeta("composer:again", "1");
+        return false;
+      }
     }
-    this.setMeta(`compose:${candidateId}`, `${owner}@${now}`);
+    this.setMeta("composer", `${owner}@${now}`);
+    this.sql.exec("DELETE FROM meta WHERE k = 'composer:again'");
     return true;
   }
 
-  releaseComposition(candidateId: string, owner: string): void {
-    if (this.meta(`compose:${candidateId}`)?.startsWith(`${owner}@`)) this.sql.exec("DELETE FROM meta WHERE k = ?", `compose:${candidateId}`);
+  /** Releases the composer lease; true when another composition was asked for meanwhile. */
+  releaseComposer(owner: string): boolean {
+    if (!this.meta("composer")?.startsWith(`${owner}@`)) return false;
+    const again = this.meta("composer:again") === "1";
+    this.sql.exec("DELETE FROM meta WHERE k IN ('composer', 'composer:again')");
+    return again;
   }
 
   /** Where a conflicted composition stopped: the tree of everything before the conflicting contribution. */
@@ -407,11 +403,6 @@ export class ObjectiveDO extends DurableObject<Env> {
 
   setBaseline(key: string, checks: { id: string; status: string; detail: string }[]): void {
     this.setMeta(`baseline:${key}`, JSON.stringify(checks));
-  }
-
-  /** Backfill for contributions registered before Nest recorded which files they create. */
-  setAdds(id: string, adds: string[]): void {
-    this.sql.exec("UPDATE contributions SET adds = ? WHERE id = ?", JSON.stringify([...adds].sort()), id);
   }
 
   contribution(id: string): Contribution | null {
@@ -673,43 +664,6 @@ export class ObjectiveDO extends DurableObject<Env> {
     for (const id of ids) this.sql.exec("UPDATE candidates SET status = 'outdated' WHERE id = ? AND status NOT IN ('accepted', 'superseded')", id);
   }
 
-  // ---------- spend (central counter for every model call) ----------
-
-  reserveSpend(id: string, task: string | null, model: string, microUsd: number, capMicroUsd: number): boolean {
-    // An id is honoured once and only while unsettled, so replaying it cannot bypass the cap.
-    const existing = this.sql.exec<Row>("SELECT state FROM spend WHERE id = ?", id).toArray()[0];
-    if (existing) return existing.state === "reserved";
-    if (!Number.isSafeInteger(microUsd) || microUsd <= 0) throw new ObjectiveError("INVALID_RESERVATION");
-    const used = Number(this.sql.exec<{ s: number | null }>("SELECT SUM(COALESCE(actual, reserved)) s FROM spend WHERE state != 'refused'").one().s ?? 0);
-    const ok = used + microUsd <= capMicroUsd;
-    this.sql.exec("INSERT INTO spend VALUES (?, ?, ?, ?, NULL, ?, ?)", id, task, model, microUsd, ok ? "reserved" : "refused", new Date().toISOString());
-    if (!ok) this.emit("AI Gateway", "spend", `Refused a ${model} call: the spend cap is reached`, { used, cap: capMicroUsd });
-    return ok;
-  }
-
-  settleSpend(id: string, actualMicroUsd: number) {
-    this.sql.exec("UPDATE spend SET actual = ?, state = 'settled' WHERE id = ? AND state = 'reserved'", Math.max(0, Math.round(actualMicroUsd)), id);
-  }
-
-  spend(): { usedMicroUsd: number; capMicroUsd: number; calls: number; byModel: Record<string, number> } {
-    const rows = this.sql.exec<Row>("SELECT model, SUM(COALESCE(actual, reserved)) s, COUNT(*) n FROM spend WHERE state != 'refused' GROUP BY model").toArray();
-    const byModel = Object.fromEntries(rows.map((r) => [String(r.model), Number(r.s)]));
-    return { usedMicroUsd: rows.reduce((a, r) => a + Number(r.s), 0), capMicroUsd: Number(this.env.SPEND_CAP_MICRO_USD), calls: rows.reduce((a, r) => a + Number(r.n), 0), byModel };
-  }
-
-  /** Owner-only, for rehearsals: forget all coordination state. Repositories in Artifacts are untouched. */
-  /**
-   * Owner-only, for rehearsals: forget coordination state. The spend ledger survives, so the cap can
-   * never be escaped by resetting. Repositories in Artifacts are untouched.
-   */
-  async reset(): Promise<void> {
-    for (const ws of this.ctx.getWebSockets()) ws.close(1012, "objective reset");
-    const spend = this.sql.exec<Row>("SELECT * FROM spend").toArray();
-    await this.ctx.storage.deleteAll();
-    this.schema();
-    for (const r of spend) this.sql.exec("INSERT OR IGNORE INTO spend VALUES (?, ?, ?, ?, ?, ?, ?)", r.id, r.task, r.model, r.reserved, r.actual, r.state, r.at);
-  }
-
   // ---------- snapshot ----------
 
   state() {
@@ -722,7 +676,6 @@ export class ObjectiveDO extends DurableObject<Env> {
       reviews: this.reviews(),
       candidates: this.candidates(),
       inbox: this.inbox(),
-      spend: this.spend(),
       lastSeq: this.lastSeq(),
     };
   }

@@ -11,14 +11,14 @@
   "routes": [{ "pattern": "nestagents.dev", "custom_domain": true }],
   "workers_dev": false,
   "preview_urls": false,
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp", "/preview/*", "/shots/*"] },
+  // The UI is one page; /o/<objective> and /p/<project> are its routes.
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/mcp", "/shots/*"] },
 
   "vars": {
     "ACCOUNT_ID": "461aad8037e6c7bda5bac789d1393a75",
     "ARTIFACTS_NAMESPACE": "nest",
     "AI_GATEWAY_ID": "nest",
     "AI_GATEWAY_MODE": "gateway",
-    "PROJECT": "harbor",
     "AGENT_MODEL_OPENAI": "gpt-6-luna",
     "AGENT_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
     "REVIEW_MODEL_OPENAI": "gpt-6-luna",
@@ -33,12 +33,14 @@
 
   "durable_objects": {
     "bindings": [
+      { "name": "REGISTRY", "class_name": "RegistryDO" },
       { "name": "PROJECTS", "class_name": "ProjectDO" },
       { "name": "OBJECTIVES", "class_name": "ObjectiveDO" },
       { "name": "COMPUTERS", "class_name": "Computer" }
     ]
   },
   "exports": {
+    "RegistryDO": { "type": "durable-object", "storage": "sqlite" },
     "ProjectDO": { "type": "durable-object", "storage": "sqlite" },
     "ObjectiveDO": { "type": "durable-object", "storage": "sqlite" },
     "Computer": { "type": "durable-object", "storage": "sqlite" }
@@ -75,5 +77,5 @@
   "browser": { "binding": "BROWSER" },
   "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "nest_events" }],
 
-  "secrets": { "required": ["NEST_OWNER_TOKEN", "NEST_SIGNING_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"] }
+  "secrets": { "required": ["NEST_OWNER_TOKEN", "NEST_SIGNING_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CF_AIG_TOKEN"] }
 }

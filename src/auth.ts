@@ -1,5 +1,7 @@
 // Callers are authenticated here and nowhere else. Durable Objects trust only what the Worker passes.
 
+import { objectiveStub, registryStub } from "./names";
+
 export type Principal =
   | { kind: "owner" }
   | { kind: "task"; objective: string; generation: string; task: string; epoch: number }
@@ -27,9 +29,12 @@ export async function taskToken(env: Env, objective: string, generation: string,
   return `${body}.${await hmac(env.NEST_SIGNING_KEY, `task:${body}`)}`;
 }
 
-/** External agents (MCP clients) act as a registered participant with this token, valid for one generation. */
-export async function participantToken(env: Env, id: string, generation: string): Promise<string> {
-  return `p.${id}.${generation}.${await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${generation}`)}`;
+/**
+ * External agents and invited humans act as a registered participant with this token. It names the
+ * participant's revision, so rotating the participant revokes every token issued before.
+ */
+export async function participantToken(env: Env, id: string, rev: number): Promise<string> {
+  return `p.${id}.${rev}.${await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${rev}`)}`;
 }
 
 export async function authenticate(env: Env, request: Request): Promise<Principal | null> {
@@ -39,11 +44,11 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
   const owner = bearer || decodeURIComponent(cookie);
   if (owner && env.NEST_OWNER_TOKEN && timingSafeEqual(owner, env.NEST_OWNER_TOKEN)) return { kind: "owner" };
   if (bearer.startsWith("p.")) {
-    const [, id, generation, sig] = bearer.split(".");
-    if (!id || !generation || !sig || !timingSafeEqual(sig, await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${generation}`))) return null;
-    const { objectiveStub } = await import("./names");
-    const current = await objectiveStub(env).generation().catch(() => null);
-    return current === generation ? { kind: "participant", id } : null;
+    const [, id, revText, sig, extra] = bearer.split(".");
+    if (!id || !revText || !sig || extra !== undefined || !/^\d{1,9}$/.test(revText)) return null;
+    if (!timingSafeEqual(sig, await hmac(env.NEST_SIGNING_KEY, `participant:${id}:${revText}`))) return null;
+    const current = await registryStub(env).participant(id).catch(() => null);
+    return current && current.rev === Number(revText) ? { kind: "participant", id } : null;
   }
 
   const task = request.headers.get("x-nest-task");
@@ -53,8 +58,6 @@ export async function authenticate(env: Env, request: Request): Promise<Principa
       const [objective, generation, taskId, epochText, sig] = parts as [string, string, string, string, string];
       const expected = await hmac(env.NEST_SIGNING_KEY, `task:${objective}.${generation}.${taskId}.${epochText}`);
       if (!timingSafeEqual(sig, expected)) return null;
-      // A token from before a reset names an older generation and is no longer valid.
-      const { objectiveStub } = await import("./names");
       const current = await objectiveStub(env, objective).generation().catch(() => null);
       return current === generation ? { kind: "task", objective, generation, task: taskId, epoch: Number(epochText) } : null;
     }
