@@ -90,7 +90,10 @@ new monitor, which edits a protected file.
   Shrike found that its label overflowed a 360-pixel phone, and Kite disagreed.
 - The human agreed with Shrike and returned the change. Kestrel re-created it with a wrapping label and a
   `Nest-Supersedes` trailer; two families approved it; Nest composed it with the monitor change the human
-  had approved and accepted checkpoint 13 automatically. The run cost $2.10.
+  had approved and accepted checkpoint 13 automatically. The new monitor turned out to be wrong: the
+  dashboard answers 403 to automated requests, so the human gave Finch a task to watch cloudflare.com
+  instead, two families approved it above the bar for a protected file, and checkpoint 14 shipped without a
+  human. The objective cost $2.65 in model spend.
 
 ## How it uses Cloudflare
 
@@ -150,7 +153,7 @@ from the owner.
 pnpm install
 # In wrangler.jsonc: set ACCOUNT_ID, and the route (or "workers_dev": true).
 # Workflow names (nest-ingest, nest-task, nest-review, nest-compose) must be unused in your account.
-# Artifacts creates the namespace named in wrangler.jsonc (ARTIFACTS_NAMESPACE, "nest") on first use.
+# The Artifacts namespace named in wrangler.jsonc (ARTIFACTS_NAMESPACE) must exist; ours appeared at first deploy.
 pnpm exec wrangler r2 bucket create nest-objects
 # Create an AI Gateway named "nest" with authentication on, and an AI Gateway Run token for it.
 # Then put these in a secrets file:
