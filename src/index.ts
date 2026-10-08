@@ -12,7 +12,7 @@ import { ConfigError } from "./projectconfig";
 import { bootstrapProject, createObjective, createProject, objectivePolicy, readProjectConfig, syncRoster } from "./projects";
 import { chat, isPriced, parseJsonReply } from "./models";
 import { OBJECTIVE_ID, PROJECT_ID } from "./registry";
-import { reconcileConflict, repairOutcome, requestCompose, startTask, stopTask } from "./tasks";
+import { reapAttempts, reconcileConflict, repairOutcome, requestCompose, startTask, stopTask } from "./tasks";
 
 export { RegistryDO } from "./registry";
 export { ProjectDO } from "./project";
@@ -419,7 +419,7 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     // Recovery: readiness recomputed from reviews, and a review started for any contribution without one.
     require(p, "owner");
     await objective.promoteOutcomes();
-    return json({ reviews: await ensureReviews(env, objectiveId) });
+    return json({ reviews: await ensureReviews(env, objectiveId), attempts: await reapAttempts(env, objectiveId) });
   }
 
   const reconcile = /^\/candidates\/(k[0-9a-f]{10})\/reconcile$/.exec(rest);

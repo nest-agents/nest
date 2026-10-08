@@ -177,3 +177,26 @@ export async function repairOutcome(env: Env, objectiveId: string, candidateId: 
   return startTask(env, objectiveId, id, participantId, "agent");
 }
 
+
+/**
+ * An attempt whose workflow died (the platform lost the container, a step ran out of retries) would stay
+ * "running" forever, holding its task. The workflow's own record says what happened; the attempt is closed
+ * with that reason so the task can be started again.
+ */
+export async function reapAttempts(env: Env, objectiveId: string): Promise<string[]> {
+  const objective = objectiveStub(env, objectiveId);
+  const state = await objective.state();
+  const generation = await objective.generation();
+  const reaped: string[] = [];
+  for (const t of state.tasks) {
+    if (t.status !== "running") continue;
+    const instance = await env.TASKS.get(taskWorkflowId(generation, t.id, t.epoch)).catch(() => null);
+    const s = instance ? await instance.status().catch(() => null) : null;
+    if (!s || !["errored", "terminated", "complete"].includes(s.status)) continue;
+    const why = s.status === "errored" ? `Nest could not run this attempt: ${String(s.error?.message ?? s.error ?? "unknown error").slice(0, 200)}` : `its workflow ended (${s.status}) without finishing it`;
+    await objective.finishAttempt(t.id, t.epoch, "failed", why);
+    await objective.log("Workflows", "attempt-end", `${t.title}: attempt ${t.epoch} failed. ${why}`, { task: t.id, epoch: t.epoch });
+    reaped.push(t.id);
+  }
+  return reaped;
+}

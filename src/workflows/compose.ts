@@ -9,7 +9,7 @@ import type { ObjectiveDO } from "../objective";
 import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
 import { readProjectConfig } from "../projects";
 import { acceptCandidate, mirrorMain } from "../accepting";
-import { repairBrief, startTask } from "../tasks";
+import { reapAttempts, repairBrief, startTask } from "../tasks";
 import { ArtifactsClient } from "../artifacts";
 import { sha256Hex } from "../protocol";
 
@@ -28,6 +28,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     const mine = await step.do("claim the composer", async () => objective.claimComposer(event.instanceId));
     if (!mine) return { deferred: true };
     try {
+      // Composers run often, so this is where attempts whose workflow died are closed with the reason.
+      await step.do("close attempts whose workflow died", async () => reapAttempts(this.env, objectiveId));
       return await this.compose(event, step, objective);
     } finally {
       await step.do("release the composer", async () => {

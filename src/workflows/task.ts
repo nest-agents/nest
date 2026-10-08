@@ -94,7 +94,9 @@ export class TaskWorkflow extends WorkflowEntrypoint<Env, Params> {
       };
     });
 
-    await step.do("start the computer", { retries: { limit: 2, delay: "10 seconds" }, timeout: "5 minutes" }, async () => {
+    // Twenty containers starting within a minute saw "Network connection lost" from the platform; a start is
+    // retried for a few minutes before the attempt is given up.
+    await step.do("start the computer", { retries: { limit: 6, delay: "15 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
       const props = { computer: computerName, role: "agent" as const, project: projectId, objective: oid, task: tid, epoch, workspace: repo };
       const ready = await computer.prepareAgent(props, artifactsRemote(env, repo), { name: setup.who.name, email: `${setup.who.id}@agents.nest.invalid` });
       if (ready.exitCode !== 0) throw new Error(`workspace setup failed: ${ready.stderr.slice(-500)}`);
