@@ -74,20 +74,29 @@ export async function acceptCandidate(env: Env, objectiveId: string, candidateId
     }
   }
 
-  // The project's main branch follows the accepted head, which is what its deploy pipeline (for example
-  // Workers Builds) ships to production. Only the project's mirror computer, which never runs candidate
-  // code, may move main.
+  await mirrorMain(env, projectId, objectiveId, checkpoint, config.production);
+  // Work that was not in this outcome is composed again on the new checkpoint.
+  await requestCompose(env, objectiveId, `checkpoint ${checkpoint.version} accepted`);
+  return { checkpoint };
+}
+
+/**
+ * The project's main branch follows the accepted head, which is what its deploy pipeline (for example
+ * Workers Builds) ships to production. Only the project's mirror computer, which never runs candidate
+ * code, may move main. A composer calls this again whenever it finds main behind the head.
+ */
+export async function mirrorMain(env: Env, projectId: string, objectiveId: string, head: { version: number; commit: string; candidate: string | null }, production: string | null): Promise<boolean> {
+  if (!head.candidate) return true; // a context-only checkpoint keeps the commit main already has
+  const objective = objectiveStub(env, objectiveId);
   const name = `mirror.${projectId}`;
   const mirror = env.COMPUTERS.getByName(name);
   await mirror.configure({ computer: name, role: "mirror", project: projectId, objective: objectiveId });
   const remote = artifactsRemote(env, projectRepo(projectId));
-  const mirrored = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateRef(candidateId)} && git merge --ff-only --quiet ${c.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
-  await objective.log("Artifacts", "mirror", mirrored.exitCode === 0
-    ? `Fast-forwarded ${projectId} main to ${c.commit.slice(0, 7)}${config.production ? `; production deploys from main to ${config.production}` : ""}`
-    : `Main will catch up: ${mirrored.stderr.slice(0, 200)}`);
-  // Work that was not in this outcome is composed again on the new checkpoint.
-  await requestCompose(env, objectiveId, `checkpoint ${checkpoint.version} accepted`);
-  return { checkpoint };
+  const r = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateRef(head.candidate)} && git merge --ff-only --quiet ${head.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  await objective.log("Artifacts", "mirror", r.exitCode === 0
+    ? `Fast-forwarded ${projectId} main to ${head.commit.slice(0, 7)}${production ? `; production deploys from main to ${production}` : ""}`
+    : `Could not move ${projectId} main to checkpoint ${head.version}; the next composition tries again: ${r.stderr.slice(0, 200)}`);
+  return r.exitCode === 0;
 }
 
 const KIND_DIRS: Record<string, string> = { requirement: "req", decision: "dec", evidence: "ev", policy: "policy", note: "note" };

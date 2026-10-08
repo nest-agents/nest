@@ -8,7 +8,8 @@ import { artifactsRemote, candidateBranch, objectiveStub, projectRepo, projectSt
 import type { ObjectiveDO } from "../objective";
 import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
 import { readProjectConfig } from "../projects";
-import { acceptCandidate } from "../accepting";
+import { acceptCandidate, mirrorMain } from "../accepting";
+import { ArtifactsClient } from "../artifacts";
 import { sha256Hex } from "../protocol";
 
 /** `only` recomposes exactly these outcomes (an owner's request), instead of the planner's top three. */
@@ -75,15 +76,22 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         });
         planned.push({ id, name, order: f.order, choice: f.choice, reusedAcross });
       }
+      const mainCommit = await new ArtifactsClient(env.ARTIFACTS).head(projectRepo(projectId)).catch(() => null);
       return {
         project: projectId,
-        head: { version: head.version, commit: head.commit, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
+        head: { version: head.version, commit: head.commit, contextDigest: head.contextDigest, policyDigest: head.policyDigest, candidate: head.candidate },
+        mainBehind: mainCommit !== head.commit,
         config, configError, planned,
         picks: Object.fromEntries(state.contributions.map((c) => [c.id, { repo: c.repo, commit: c.commit, title: c.title, author: c.author, status: c.status }])),
         existing: state.candidates.map((c) => ({ id: c.id, status: c.status, previewPending: c.checks.some((k) => k.id === "preview" && k.status === "PENDING") })),
         approved: state.contributions.filter((c) => c.status === "approved").map((c) => c.id),
       };
     });
+
+    // Production follows main. If the mirror failed at acceptance, main is behind the head: catch it up.
+    if (plan.mainBehind && plan.head.candidate) {
+      await step.do(`catch main up to checkpoint ${plan.head.version}`, async () => mirrorMain(env, plan.project, objectiveId, plan.head, plan.config?.production ?? null));
+    }
 
     // A conflict between work the new plan no longer combines (for example two competing approaches, now
     // known to be one choice) is not a question for a human any more.
