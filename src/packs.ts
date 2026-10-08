@@ -10,16 +10,27 @@ import { boundary, UNTRUSTED_RULE, wrapUntrusted } from "./untrusted";
  * The repository at a commit, as pack sections: a file map first, then source before tests before the
  * rest, each file whole, stopping at the token budget. Large or binary files are listed but not included.
  */
-export async function repositorySections(env: Env, repo: string, commit: string, label: string, budgetTokens: number, nonce = boundary()): Promise<PackSection[]> {
+/** File names and paths a task mentions, so the files it is about come first in the pack. */
+export function fileHints(text: string): string[] {
+  return [...new Set((text.match(/[\w@./-]*\w\.(?:tsx?|jsx?|mjs|cjs|json|jsonc|md|css|html|toml|ya?ml)\b/g) ?? []).map((h) => h.replace(/^\.\//, "")))];
+}
+
+/** Mentioned files first, then instructions for agents, then source, then tests, then everything else. */
+export function rankPath(p: string, hints: string[]): number {
+  if (hints.some((h) => p === h || p.endsWith(`/${h}`))) return 0;
+  return /^(AGENTS|README)\.md$/i.test(p) ? 1 : /(^|\/)(src|lib|app)\//.test(p) ? 2 : /(^|\/)(test|tests|__tests__)\//.test(p) ? 3 : 4;
+}
+
+export async function repositorySections(env: Env, repo: string, commit: string, label: string, budgetTokens: number, nonce = boundary(), hints: string[] = []): Promise<PackSection[]> {
   const MAX_FILES = 300;
   const artifacts = new ArtifactsClient(env.ARTIFACTS);
   const files = await artifacts.listFiles(repo, commit, 5000);
-  // Instructions for agents first, then source, then tests, then everything else. Lockfiles are listed only.
-  const rank = (p: string) => (/^(AGENTS|README)\.md$/i.test(p) ? 0 : /^(src|lib|app)\//.test(p) ? 1 : /^(test|tests|__tests__)\//.test(p) ? 2 : 3);
+  const rank = (p: string) => rankPath(p, hints);
   const textual = /\.(ts|tsx|js|mjs|cjs|json|jsonc|md|css|html|txt|toml|yaml|yml)$/i;
   const map = files.slice(0, 2000).map((f) => f.path).join("\n") + (files.length > 2000 ? `\n... ${files.length - 2000} more` : "");
   const sections: PackSection[] = [{ title: `${label}: file map`, text: wrapUntrusted(nonce, "file map", map) }];
   let used = estimateTokens(map);
+  // Lockfiles are listed only.
   const queue = files.filter((f) => textual.test(f.path) && !/(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|worker-configuration\.d\.ts)$/.test(f.path)).sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path)).slice(0, MAX_FILES);
   // Read in small parallel batches and stop as soon as the budget is spent.
   for (let i = 0; i < queue.length && used < budgetTokens; i += 8) {
@@ -87,7 +98,7 @@ export async function buildPack(env: Env, objectiveId: string, taskId: string, b
     optional.push({ title: `${item.kind}: ${item.title}`, cite: citeOf(item), text: item.body });
   // Massive context: the whole accepted repository, then other agents' full diffs, within the budget.
   const head = await project.head();
-  if (head) optional.push(...(await repositorySections(env, projectRepo(projectId), head.commit, `Repository at checkpoint ${head.version}`, Math.floor(budgetTokens * 0.5), nonce)));
+  if (head) optional.push(...(await repositorySections(env, projectRepo(projectId), head.commit, `Repository at checkpoint ${head.version}`, Math.floor(budgetTokens * 0.5), nonce, task ? fileHints(`${task.title}\n${task.brief}`) : [])));
   if (others.length) {
     const { contributionDiff } = await import("./workflows/review");
     let diffBudget = Math.floor(budgetTokens * 0.25);

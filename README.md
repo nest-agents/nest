@@ -142,6 +142,14 @@ from the owner.
 - `.nest/`, `package.json`, lockfiles, package-manager configuration and Wrangler configuration always need
   a human. `protected` adds more, such as Dockerfiles or build scripts.
 
+An imported repository starts with an empty configuration (nothing but the composition check), so the first
+contribution is usually this file, and because `.nest/` is protected a human approves it. That is how
+`remeda` (164 modules) was brought in on 2026-10-08: one push from a laptop, two reviewers, one approval.
+
+**Start many agents.** `scripts/many-agents.sh <spec.json>` adds requirements, creates an objective and its
+tasks, and starts them on the listed workers a few seconds apart, all through the public API.
+`scripts/remeda-tests.json` is the 24-task run described in `docs/VIDEO.md`.
+
 **Bring an agent.** The owner creates a participant token (Invite on the home page, or
 `POST /api/participants`). Any MCP client can then use `https://nestagents.dev/mcp` with
 `Authorization: Bearer <token>`. The tools are `nest_objectives`, `nest_state`, `nest_pack`, `nest_search`,

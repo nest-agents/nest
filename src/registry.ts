@@ -137,6 +137,26 @@ export class RegistryDO extends DurableObject<Env> {
   settleSpend(id: string, actualMicroUsd: number): void {
     this.sql.exec("UPDATE spend SET actual = ?, state = 'settled' WHERE id = ? AND state = 'reserved'", Math.max(0, Math.round(actualMicroUsd)), id);
   }
+  /**
+   * The price table was wrong for a model, so every entry of it was too high by the same factor. The
+   * entries stay as written; one visible negative entry per objective brings each total to what the
+   * right price gives. Once per model, objective and factor.
+   */
+  correctSpend(model: string, factor: number): { objectives: number; microUsd: number } {
+    if (!/^[\w@./-]{2,80}$/.test(model) || !(factor > 0 && factor < 1)) throw new RegistryError("INVALID_CORRECTION", "a model id and a factor strictly between 0 and 1");
+    const rows = this.sql.exec<Row>("SELECT objective, SUM(COALESCE(actual, reserved)) s FROM spend WHERE model = ? AND state != 'refused' GROUP BY objective", model).toArray();
+    let objectives = 0;
+    let microUsd = 0;
+    for (const r of rows) {
+      const amount = Math.round(Number(r.s) * (1 - factor));
+      const id = `correction-${model}-${r.objective ?? "global"}-x${Math.round(factor * 1_000_000)}`;
+      if (amount <= 0 || this.sql.exec<Row>("SELECT 1 FROM spend WHERE id = ?", id).toArray()[0]) continue;
+      this.sql.exec("INSERT INTO spend VALUES (?, ?, NULL, ?, ?, ?, 'settled', ?)", id, r.objective, `correction:${model}`, -amount, -amount, new Date().toISOString());
+      objectives += 1;
+      microUsd += amount;
+    }
+    return { objectives, microUsd };
+  }
 
   spend(objective?: string): { usedMicroUsd: number; capMicroUsd: number; calls: number; byModel: Record<string, number>; objectiveMicroUsd: number } {
     const rows = this.sql.exec<Row>("SELECT model, SUM(COALESCE(actual, reserved)) s, COUNT(*) n FROM spend WHERE state != 'refused' GROUP BY model").toArray();

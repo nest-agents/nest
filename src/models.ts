@@ -2,10 +2,11 @@
 // through Outbound. Prices are conservative per-token USD figures used for admission and settlement.
 
 const PRICES: Record<string, { in: number; out: number }> = {
+  // OpenAI list prices (standard tier, short context), 2026-10-08.
   "gpt-6-sol": { in: 2, out: 10 },
   "gpt-6.1-sol": { in: 2, out: 10 },
-  "gpt-6-astra": { in: 5, out: 25 },
-  "gpt-6-luna": { in: 2, out: 10 },
+  "gpt-6-astra": { in: 10, out: 50 },
+  "gpt-6-luna": { in: 0.1, out: 0.5 },
   "anthropic/claude-haiku-5.5": { in: 0.1, out: 0.5 },
   "anthropic/claude-sonnet-5.5": { in: 2, out: 10 },
   "anthropic/claude-opus-5.5": { in: 4, out: 20 },

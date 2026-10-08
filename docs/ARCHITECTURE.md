@@ -263,3 +263,12 @@ Each was found in a real run on Cloudflare and is fixed in the commit history.
   as a third family, but `gpt-oss` is an OpenAI model, so its reviews of Codex-authored work were not
   independent. Plover keeps its identity and past reviews and no longer reviews. Kite (DeepSeek) and Tern
   (Zhipu), both on Workers AI, replace it.
+- **The price table was wrong.** The meter charged `gpt-6-luna` at $2 and $10 per million tokens; OpenAI's
+  list is $0.10 and $0.50, so every Codex attempt was metered at twenty times its cost (and `gpt-6-astra` at
+  half). AI Gateway's own accounting showed it: $0.15 for 4.15M `gpt-6-luna` tokens against $7.53 in the
+  ledger. The table now carries list prices, and because both the input and the output price were off by
+  the same factor, the ledger is corrected exactly by one visible negative entry per objective
+  (`POST /api/admin/spend/correct`), with the original entries left as written.
+- **Packs put the task's files first.** The repository section of a pack read files in a fixed order
+  (instructions, source, tests, the rest, alphabetically), so on a 164-module library an agent asked about
+  `zip.ts` got `add.ts` through `mapValues.ts` and not its own module. Files the task names now come first.

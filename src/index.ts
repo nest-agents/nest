@@ -133,6 +133,15 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     return json({ carried: await registry.carrySpend(String(b.id), Number(b.microUsd), String(b.note ?? "carried over")), spend: await registry.spend() });
   }
 
+  if (route === "POST /api/admin/spend/correct") {
+    // A wrong price in the table: ledger entries for that model are too high by a constant factor. The
+    // entries stay; one negative entry per objective, visible in the ledger, puts the totals right.
+    require(p, "owner");
+    const b = await body<{ model: string; factor: number }>(request);
+    if (!isPriced(String(b.model ?? ""))) throw new HttpError(400, "NOT_A_PRICED_MODEL", `${b.model} is not in the price table`);
+    return json(await registryStub(env).correctSpend(String(b.model), Number(b.factor)));
+  }
+
   if (route === "POST /api/admin/repos/prune") {
     require(p, "owner");
     const b = await body<{ prefix: string; dryRun?: boolean }>(request);

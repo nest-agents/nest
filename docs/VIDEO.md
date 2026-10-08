@@ -132,10 +132,21 @@ Tasks (New task), started on the agent shown:
 
 ## The scale run (recorded separately, before the main recording)
 
-Create a project from a public git URL (a mid-sized TypeScript repository with many independent modules),
-add two requirements, and start 20 to 24 agents on small independent tasks (one module each: tests, docs,
-a small refactor). Let it run 30 minutes. Keep the whole recording; use 30 seconds of it at 16×. Report the
-numbers exactly as the objective page shows them. Budget about $8.
+The project is **remeda** (github.com/remeda/remeda, MIT, 164 independent modules), imported into Nest on
+2026-10-08 as project `remeda`. Its first contribution, pushed by an invited human from a laptop, was
+`.nest/project.json` (install the workspace, run the runtime tests, run the type check); reviewers from two
+families read it, a human approved it because `.nest/` is protected, and it is checkpoint 2.
+
+The run itself is `scripts/remeda-tests.json`: two requirements and 24 tasks, one module each, every task
+"extend this module's tests with the edge cases it does not cover; change no other file". Start it with
+
+    NEST_TOKEN=… scripts/many-agents.sh scripts/remeda-tests.json
+
+which adds the requirements, creates the objective `remeda-edge-cases`, creates the tasks and starts them
+on Wren, Kestrel, Finch and Heron in turn, four seconds apart. Record the objective page from the first
+start; let it run 30 minutes. Keep the whole recording; use 30 seconds of it at 16×. Report the numbers
+exactly as the objective page shows them: agents, contributions, reviews, outcomes, checkpoints, dollars.
+Budget about $8.
 
 ## If something goes wrong on camera
 
