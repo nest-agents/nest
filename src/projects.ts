@@ -37,7 +37,11 @@ export function defaultRoster(env: Env): Participant[] {
     { id: "finch", kind: "agent", name: "Finch", family: "openai", model: env.AGENT_MODEL_OPENAI, harness: "codex" },
     { id: "shrike", kind: "agent", name: "Shrike", family: "openai", model: env.REVIEW_MODEL_OPENAI, harness: "reviewer" },
     { id: "owl", kind: "agent", name: "Owl", family: "anthropic", model: env.REVIEW_MODEL_ANTHROPIC, harness: "reviewer" },
-    { id: "plover", kind: "agent", name: "Plover", family: "workers-ai", model: env.REVIEW_MODEL_WORKERS_AI, harness: "reviewer" },
+    // Plover ran gpt-oss, an OpenAI model, so it was not independent of OpenAI authors. It keeps its
+    // identity and past reviews, and no longer reviews.
+    { id: "plover", kind: "agent", name: "Plover", family: "workers-ai", model: env.REVIEW_MODEL_WORKERS_AI, harness: "retired" },
+    { id: "kite", kind: "agent", name: "Kite", family: "deepseek", model: env.REVIEW_MODEL_DEEPSEEK, harness: "reviewer" },
+    { id: "tern", kind: "agent", name: "Tern", family: "zhipu", model: env.REVIEW_MODEL_ZHIPU, harness: "reviewer" },
     { id: "triage", kind: "agent", name: "Triage", family: "workers-ai", model: env.REVIEW_MODEL_WORKERS_AI, harness: "triage" },
   ];
 }
@@ -47,6 +51,14 @@ export async function ensureRoster(env: Env): Promise<Participant[]> {
   const registry = registryStub(env);
   for (const p of defaultRoster(env)) await registry.upsertParticipant(p);
   return registry.participants();
+}
+
+/** Brings every objective's copy of the participants up to date with the registry. */
+export async function syncRoster(env: Env): Promise<{ participants: number; objectives: number }> {
+  const participants = await ensureRoster(env);
+  const objectives = await registryStub(env).objectives();
+  for (const o of objectives) for (const p of participants) await objectiveStub(env, o.id).upsertParticipant(p);
+  return { participants: participants.length, objectives: objectives.length };
 }
 
 /**

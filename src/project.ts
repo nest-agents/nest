@@ -6,7 +6,10 @@ import { digestOf } from "./protocol";
 import type { Head } from "./domain/accept";
 
 /** Machine-readable block from a context item. Concrete so it crosses Workers RPC with exact types. */
-export type PolicyBlock = { agentReviewers?: number; minConfidence?: number; protectedPaths?: string[] };
+export type PolicyBlock = {
+  agentReviewers?: number; minConfidence?: number; protectedPaths?: string[];
+  decider?: "human" | "agents"; humanPaths?: string[]; autoAccept?: boolean;
+};
 
 export type ContextItem = {
   id: string;

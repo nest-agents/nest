@@ -300,7 +300,7 @@ describe("policy floors", () => {
   const triage: ReviewFact = { reviewer: "triage", kind: "agent", family: "workers-ai", verdict: "comment", confidence: 1, triage: true };
   const ok = [triage, { reviewer: "a", kind: "agent" as const, family: "anthropic", verdict: "approve" as const, confidence: 0.6 }, { reviewer: "d", kind: "agent" as const, family: "deepseek", verdict: "approve" as const, confidence: 0.6 }];
   it("keeps built-in protections when a policy omits or shrinks them", () => {
-    expect(route({ agentReviewers: 2, minConfidence: 0.1, protectedPaths: [] }, subject, ok).state).toBe("needs-human");
+    expect(route({ ...DEFAULT_POLICY, agentReviewers: 2, minConfidence: 0.1, protectedPaths: [] }, subject, ok).state).toBe("needs-human");
     expect(effectivePolicy({ protectedPaths: ["src/data.ts"] }).protectedPaths).toEqual(expect.arrayContaining(["src/data.ts", "wrangler.jsonc", ".nest/"]));
     expect(effectivePolicy(null).agentReviewers).toBe(2);
     expect(effectivePolicy({ agentReviewers: -3, minConfidence: Number.NaN }).agentReviewers).toBe(1);
@@ -416,6 +416,54 @@ describe("protected paths", () => {
     expect(protectedMatch("src/monitors.ts", "src/monitors.ts")).toBe(true);
     expect(protectedMatch("lib/src/monitors.ts", "src/monitors.ts")).toBe(false);
     expect(protectedMatch("Package.JSON", "package.json")).toBe(true);
+  });
+});
+
+describe("when agents decide", () => {
+  const agentsDecide = effectivePolicy({ decider: "agents" });
+  const triage: ReviewFact = { reviewer: "triage", kind: "agent", family: "workers-ai", verdict: "comment", confidence: 1, triage: true };
+  const rv = (reviewer: string, family: string, verdict: ReviewFact["verdict"], confidence = 0.95): ReviewFact => ({ reviewer, kind: "agent", family, verdict, confidence });
+  const code = { author: "wren", authorKind: "agent" as const, authorFamily: "openai", paths: ["src/incidents.ts"], citedItems: [] };
+
+  it("is off unless a human turns it on, and .nest/ always stays with a human", () => {
+    expect(effectivePolicy(null).decider).toBe("human");
+    expect(effectivePolicy(null).autoAccept).toBe(false);
+    expect(effectivePolicy({ decider: "agents", humanPaths: [] }).humanPaths).toEqual([".nest/"]);
+    expect(agentsDecide.humanPaths).toEqual(expect.arrayContaining([".nest/", "package.json", ".npmrc"]));
+  });
+  it("lets unanimous, confident agents decide what would otherwise reach a human", () => {
+    const split = [triage, rv("owl", "anthropic", "approve", 0.7), rv("kite", "deepseek", "approve")];
+    expect(route(DEFAULT_POLICY, code, split).state).toBe("needs-human");
+    expect(route(agentsDecide, code, [triage, rv("owl", "anthropic", "approve"), rv("kite", "deepseek", "approve")]).state).toBe("approved");
+  });
+  it("asks one more family when agents disagree or are unsure, then a human", () => {
+    const disagree = [triage, rv("owl", "anthropic", "approve"), rv("kite", "deepseek", "changes")];
+    const r = route(agentsDecide, code, disagree);
+    expect(r.state).toBe("needs-reviewers");
+    expect(r.state === "needs-reviewers" && r.excludeFamilies.sort()).toEqual(["anthropic", "deepseek", "openai"]);
+    expect(route(agentsDecide, code, [...disagree, rv("tern", "zhipu", "approve")]).state).toBe("needs-human");
+    expect(route(agentsDecide, code, [triage, rv("owl", "anthropic", "approve", 0.6), rv("kite", "deepseek", "approve"), rv("tern", "zhipu", "approve")]).state).toBe("needs-human");
+  });
+  it("blocks when any agent blocks", () => {
+    expect(route(agentsDecide, code, [triage, rv("owl", "anthropic", "approve"), rv("kite", "deepseek", "block")])).toEqual({ state: "blocked", by: "agents" });
+  });
+  it("raises the bar for protected files and keeps build files with a human unless the human hands them over", () => {
+    const monitors = { ...code, paths: ["src/monitors.ts"] };
+    const policy = effectivePolicy({ decider: "agents", protectedPaths: ["src/monitors.ts"] });
+    expect(route(policy, monitors, [triage, rv("owl", "anthropic", "approve", 0.85), rv("kite", "deepseek", "approve")]).state).toBe("needs-reviewers");
+    expect(route(policy, monitors, [triage, rv("owl", "anthropic", "approve", 0.92), rv("kite", "deepseek", "approve")]).state).toBe("approved");
+    const pkg = { ...code, paths: ["package.json"] };
+    const both = [triage, rv("owl", "anthropic", "approve"), rv("kite", "deepseek", "approve")];
+    expect(route(agentsDecide, pkg, both).state).toBe("needs-human");
+    expect(route(effectivePolicy({ decider: "agents", humanPaths: [] }), pkg, both).state).toBe("approved");
+    expect(route(effectivePolicy({ decider: "agents", humanPaths: [] }), { ...code, paths: [".nest/project.json"] }, both).state).toBe("needs-human");
+  });
+  it("never lets models clear a deterministic guard, and a human still decides over agents", () => {
+    const flagged = { ...code, flags: ["Possible prompt injection in the change"] };
+    const both = [triage, rv("owl", "anthropic", "approve"), rv("kite", "deepseek", "approve")];
+    expect(route(agentsDecide, flagged, both).state).toBe("needs-human");
+    const human: ReviewFact = { reviewer: "you", kind: "person", family: "human", verdict: "block", confidence: 1 };
+    expect(route(agentsDecide, code, [...both, human])).toEqual({ state: "blocked", by: "people" });
   });
 });
 

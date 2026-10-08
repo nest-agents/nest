@@ -5,6 +5,7 @@ import { parseContextFile, renderContextFile } from "./context";
 import { artifactsRemote, candidateRef, contextRepo, objectiveStub, projectRepo, projectStub, registryStub, short } from "./names";
 import { requiredChecks } from "./projectconfig";
 import { readProjectConfig, refreshPolicies } from "./projects";
+import { requestCompose } from "./tasks";
 
 export class AcceptError extends Error {
   // Durable Object RPC keeps only the message, so the code leads it.
@@ -84,6 +85,8 @@ export async function acceptCandidate(env: Env, objectiveId: string, candidateId
   await objective.log("Artifacts", "mirror", mirrored.exitCode === 0
     ? `Fast-forwarded ${projectId} main to ${c.commit.slice(0, 7)}${config.production ? `; production deploys from main to ${config.production}` : ""}`
     : `Main will catch up: ${mirrored.stderr.slice(0, 200)}`);
+  // Work that was not in this outcome is composed again on the new checkpoint.
+  await requestCompose(env, objectiveId, `checkpoint ${checkpoint.version} accepted`);
   return { checkpoint };
 }
 
@@ -118,7 +121,8 @@ export async function changeContext(env: Env, projectId: string, input: { id: st
   if (!parsed) throw new AcceptError("INVALID_CONTEXT");
   const { checkpoint } = await project.acceptContext(head.version, parsed);
 
-  if (parsed.id === "policy/review-routing") await refreshPolicies(env, projectId);
+  const policyChanged = parsed.id === "policy/review-routing";
+  if (policyChanged) await refreshPolicies(env, projectId);
   const radii: Record<string, { contributions: number; candidates: number; tasks: number }> = {};
   for (const o of await registryStub(env).objectives(projectId)) {
     const objective = objectiveStub(env, o.id);
@@ -128,6 +132,13 @@ export async function changeContext(env: Env, projectId: string, input: { id: st
     await objective.log("Durable Objects", "context", cur
       ? `Accepted ${parsed.id} version ${parsed.version}. Blast radius: ${radius.contributions.length} contributions, ${radius.candidates.length} outcomes, ${radius.tasks.length} running tasks cited version ${cur.version}`
       : `Added ${parsed.id}: ${title}`, { item: parsed.id, version: parsed.version, ...radius });
+    // A new review policy can turn a question for a human into one more agent review.
+    if (policyChanged) {
+      for (const c of (await objective.state()).contributions.filter((x) => x.status === "proposed")) {
+        if ((await objective.routing(c.id)).state !== "needs-reviewers") continue;
+        await env.REVIEWS.create({ id: `review-${c.id}-p${checkpoint.version}`, params: { objective: o.id, contribution: c.id } }).catch(() => undefined);
+      }
+    }
     try { await env.COMPOSE.create({ id: `compose-${await objective.generation()}-ctx-${checkpoint.version}`, params: { objective: o.id, reason: `context ${parsed.id} v${parsed.version}` } }); } catch { /* already running */ }
   }
 

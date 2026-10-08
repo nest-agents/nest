@@ -24,6 +24,8 @@
     "REVIEW_MODEL_OPENAI": "gpt-6-luna",
     "REVIEW_MODEL_ANTHROPIC": "anthropic/claude-haiku-5.5",
     "REVIEW_MODEL_WORKERS_AI": "@cf/openai/gpt-oss-120b",
+    "REVIEW_MODEL_DEEPSEEK": "@cf/deepseek-ai/deepseek-v4-flash-0731",
+    "REVIEW_MODEL_ZHIPU": "@cf/zai-org/glm-5.3",
     "SPEND_CAP_MICRO_USD": "50000000",
     "AUTO_REPAIR_AGENT": "kestrel",
     "PUBLIC_URL": "https://nestagents.dev"

@@ -148,8 +148,10 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
       });
       if (routing.state !== "needs-reviewers") break;
       const reviewers = input.participants.filter((p) => p.harness === "reviewer" && !routing.excludeFamilies.includes(p.family));
-      const preference = ["anthropic", "openai", "workers-ai"];
-      reviewers.sort((a, b) => preference.indexOf(a.family) - preference.indexOf(b.family));
+      // Strongest first; the fourth family is the one asked when agents need another opinion.
+      const preference = ["anthropic", "openai", "deepseek", "zhipu"];
+      const rank = (f: string) => (preference.includes(f) ? preference.indexOf(f) : preference.length);
+      reviewers.sort((a, b) => rank(a.family) - rank(b.family));
       const chosen = reviewers.slice(0, routing.count);
       if (!chosen.length) {
         await step.do(`no reviewers available ${round}`, async () => objective.openInbox({ id: `review-${id}`, kind: "review", target: id, reasons: ["No independent agent reviewer is available"] }));
@@ -169,7 +171,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
             try {
               // Larger changes produce longer verdicts, and Workers AI's model reasons before it answers.
-              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: openai || reviewer.family === "workers-ai" ? 6000 : 4000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
+              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: reviewer.family === "anthropic" ? 4000 : 6000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
               parsed = parseJsonReply<Verdictish>(r.text);
               if (!parsed) note = "Reviewer reply was not valid JSON.";
             } catch (e) {

@@ -480,7 +480,7 @@ export class ObjectiveDO extends DurableObject<Env> {
       const who = this.participant(r.reviewer);
       const verb = r.triage ? "triaged" : { approve: "approved", changes: "requested changes on", block: "blocked", comment: "commented on" }[r.verdict];
       const direct = (this.env.AI_GATEWAY_MODE as string) !== "gateway";
-      const svc = r.kind === "person" ? "Nest" : r.family === "workers-ai" ? "Workers AI" : direct ? (r.family === "openai" ? "OpenAI" : "OpenRouter") : "AI Gateway";
+      const svc = r.kind === "person" ? "Nest" : r.family === "workers-ai" || reviewer.model.startsWith("@cf/") ? "Workers AI" : direct ? (r.family === "openai" ? "OpenAI" : "OpenRouter") : "AI Gateway";
       this.emit(svc, "review", `${who?.name ?? r.reviewer} ${verb} ${r.target.slice(2, 6)}`, { review: r.id, target: r.target, verdict: r.verdict });
     }
     return { review: this.reviews(r.target).find((x) => x.id === r.id)!, routing: this.reroute(r.target) };

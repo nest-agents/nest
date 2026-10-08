@@ -7,6 +7,15 @@ export type ReviewPolicy = {
   agentReviewers: number;
   minConfidence: number;
   protectedPaths: string[];
+  /**
+   * Who settles what a first round of agent reviews does not: "human" asks a human; "agents" asks another
+   * reviewer family and lets unanimous, confident agents decide. Either way a human's review decides over agents'.
+   */
+  decider: "human" | "agents";
+  /** When agents decide, changes to these paths still need a human. */
+  humanPaths: string[];
+  /** Accept a ready outcome without a human, unless accepting it would choose between people's work. */
+  autoAccept: boolean;
 };
 
 /**
@@ -21,12 +30,22 @@ export const FLOOR = {
     ".nest/", "wrangler.jsonc", "wrangler.json", "wrangler.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
     "bun.lock", "bun.lockb", ".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "pnpm-workspace.yaml", "bunfig.toml",
   ],
+  // Even when agents decide, no model may approve a change to how Nest checks the project.
+  humanPaths: [".nest/"],
 } as const;
+
+/** Raised bar for a protected file when agents decide alone. */
+export const AGENT_PROTECTED_CONFIDENCE = 0.9;
 
 export const DEFAULT_POLICY: ReviewPolicy = {
   agentReviewers: 2,
   minConfidence: 0.75,
   protectedPaths: [...FLOOR.protectedPaths],
+  decider: "human",
+  // By default, what decides how the project is installed and built stays with a human even when agents
+  // decide everything else. A human may narrow this to the floor, in the policy, on purpose.
+  humanPaths: [...FLOOR.protectedPaths],
+  autoAccept: false,
 };
 
 export function effectivePolicy(policy: Partial<ReviewPolicy> | null | undefined): ReviewPolicy {
@@ -35,6 +54,9 @@ export function effectivePolicy(policy: Partial<ReviewPolicy> | null | undefined
     agentReviewers: Math.max(FLOOR.agentReviewers, Math.floor(n(policy?.agentReviewers, DEFAULT_POLICY.agentReviewers))),
     minConfidence: Math.min(1, Math.max(FLOOR.minConfidence, n(policy?.minConfidence, DEFAULT_POLICY.minConfidence))),
     protectedPaths: [...new Set([...FLOOR.protectedPaths, ...(Array.isArray(policy?.protectedPaths) ? policy!.protectedPaths.filter((p) => typeof p === "string") : [])])],
+    decider: policy?.decider === "agents" ? "agents" : "human",
+    humanPaths: [...new Set([...FLOOR.humanPaths, ...(Array.isArray(policy?.humanPaths) ? policy!.humanPaths.filter((p) => typeof p === "string") : DEFAULT_POLICY.humanPaths)])],
+    autoAccept: policy?.autoAccept === true,
   };
 }
 
@@ -114,17 +136,36 @@ export function route(given: ReviewPolicy, subject: Subject, reviews: ReviewFact
     };
   }
 
-  const reasons: string[] = [];
   const verdicts = new Set(agents.map((r) => r.verdict));
+  const unusual = subject.paths.filter(unusualPath);
+  const protectedHit = subject.paths.filter((p) => !unusualPath(p) && policy.protectedPaths.some((q) => protectedMatch(p, q)));
+  // What no model may clear, whoever decides: changes reviewers could not fully see, and deterministic guards.
+  const hard: string[] = [];
+  if (!subject.paths.length) hard.push("Changed files are unknown");
+  if (unusual.length) hard.push(`Unusual file paths: ${unusual.map((p) => JSON.stringify(p)).join(", ")}`);
+  if (subject.specialEntries) hard.push("Adds a symlink or submodule");
+  for (const f of subject.flags ?? []) hard.push(f);
+
+  if (policy.decider === "agents") {
+    const humanOnly = subject.paths.filter((p) => !unusualPath(p) && policy.humanPaths.some((q) => protectedMatch(p, q)));
+    if (humanOnly.length) hard.push(`Only a human may approve changes to ${humanOnly.join(", ")}`);
+    if (hard.length) return { state: "needs-human", reasons: hard };
+    if (verdicts.has("block")) return { state: "blocked", by: "agents" };
+    // Agents deciding alone must be unanimous and confident; protected files raise the bar.
+    const bar = protectedHit.length ? Math.max(policy.minConfidence, AGENT_PROTECTED_CONFIDENCE) : policy.minConfidence;
+    if (verdicts.size === 1 && agents.every((r) => validConfidence(r.confidence) && r.confidence >= bar))
+      return { state: verdicts.has("changes") ? "changes" : "approved", by: "agents" };
+    // Not settled: one more independent family, once. After that, a human.
+    if (families.size < required + 1)
+      return { state: "needs-reviewers", count: 1, excludeFamilies: [...new Set([subject.authorFamily, ...families])] };
+    return { state: "needs-human", reasons: ["Agents could not agree, even with a reviewer from another family"] };
+  }
+
+  const reasons: string[] = [];
   if (verdicts.size > 1) reasons.push("Reviewers disagree");
   if (verdicts.has("block")) reasons.push("A reviewer blocked it");
   if (agents.some((r) => !validConfidence(r.confidence) || r.confidence < policy.minConfidence)) reasons.push("Reviewer confidence is low");
-  const unusual = subject.paths.filter(unusualPath);
-  const protectedHit = subject.paths.filter((p) => !unusualPath(p) && policy.protectedPaths.some((q) => protectedMatch(p, q)));
-  if (!subject.paths.length) reasons.push("Changed files are unknown");
-  if (unusual.length) reasons.push(`Unusual file paths: ${unusual.map((p) => JSON.stringify(p)).join(", ")}`);
-  if (subject.specialEntries) reasons.push("Adds a symlink or submodule");
-  for (const f of subject.flags ?? []) reasons.push(f);
+  reasons.push(...hard);
   if (protectedHit.length) reasons.push(`Touches protected files: ${protectedHit.join(", ")}`);
   if (reasons.length) return { state: "needs-human", reasons };
 

@@ -9,7 +9,8 @@ import { handleMcp } from "./mcp";
 import { objectiveStub, projectStub, registryStub, taskWorkflowId, workspaceRepo } from "./names";
 import { buildPack, searchContext } from "./packs";
 import { ConfigError } from "./projectconfig";
-import { bootstrapProject, createObjective, createProject, readProjectConfig } from "./projects";
+import { bootstrapProject, createObjective, createProject, objectivePolicy, readProjectConfig, syncRoster } from "./projects";
+import { chat, isPriced, parseJsonReply } from "./models";
 import { OBJECTIVE_ID, PROJECT_ID } from "./registry";
 import { reconcileConflict, requestCompose, startTask, stopTask } from "./tasks";
 
@@ -162,6 +163,29 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
     }
   }
 
+  if (route === "POST /api/admin/roster/sync") {
+    require(p, "owner");
+    return json(await syncRoster(env));
+  }
+
+  if (route === "POST /api/admin/models/probe") {
+    // One short, metered call to a priced model, to confirm it answers and returns parseable JSON.
+    require(p, "owner");
+    const b = await body<{ model: string; provider?: "openai" | "openrouter" | "workers-ai" }>(request);
+    if (!isPriced(String(b.model))) throw new HttpError(400, "UNPRICED_MODEL", "only models with an exact price may be probed");
+    const ledger = registryStub(env);
+    const started = Date.now();
+    try {
+      const r = await chat(env, { provider: b.provider ?? "workers-ai", model: b.model }, [
+        { role: "system", content: 'Reply with JSON only: {"verdict":"approve","confidence":0.9,"summary":"one short sentence"}' },
+        { role: "user", content: "Review this change: it fixes a typo in a README." },
+      ], { maxTokens: 2000, reserve: (id, micro, model) => ledger.reserveSpend(id, null, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)), settle: (id, micro) => ledger.settleSpend(id, micro), metadata: { role: "probe" } });
+      return json({ ok: true, model: b.model, ms: Date.now() - started, parsed: parseJsonReply(r.text), tokens: { in: r.inputTokens, out: r.outputTokens }, text: r.text.slice(0, 300) });
+    } catch (e) {
+      return json({ ok: false, model: b.model, error: String((e as Error)?.message ?? e).slice(0, 400) });
+    }
+  }
+
   if (route === "POST /api/admin/computers/destroy") {
     require(p, "owner");
     const b = await body<{ names: string[] }>(request);
@@ -188,7 +212,8 @@ async function projectApi(request: Request, env: Env, p: Principal, projectId: s
   if (route === "GET /") {
     const [head, checkpoints, context, notes, objectives] = await Promise.all([project.head(), project.checkpoints(), project.context(), project.notes(), registry.objectives(projectId)]);
     const { config, configError } = await configAt(env, projectId, head?.commit ?? null);
-    return json({ me: p.kind, project: record, head, checkpoints, context, notes, objectives, config, configError });
+    const policy = head ? await objectivePolicy(env, projectId) : null;
+    return json({ me: p.kind, project: record, head, checkpoints, context, notes, objectives, config, configError, policy });
   }
   if (route === "POST /bootstrap") {
     require(p, "owner");

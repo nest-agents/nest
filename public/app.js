@@ -429,7 +429,9 @@ const statusLabel = { composing: "Composing", checking: "Checking", ready: "Read
 
 function inboxHtml() {
   const items = openInbox();
-  if (!items.length) return `<div class="empty"><h4>Nothing needs you right now</h4><p>Agents review every push. You are asked when reviewers disagree, when a review blocks, when protected files change, and when an outcome is ready to accept.</p></div>`;
+  if (!items.length) return `<div class="empty"><h4>Nothing needs you right now</h4><p>${S.policy?.decider === "agents"
+    ? "Agents decide reviews in this project. You are asked only for what no model may clear: changes to how the project is checked or built, guard hits, and what agents cannot agree on."
+    : "Agents review every push. You are asked when reviewers disagree, when a review blocks, when protected files change, and when an outcome is ready to accept."}${S.policy?.autoAccept ? " Ready outcomes are accepted automatically, except a choice between competing work." : ""}</p></div>`;
   return items.map((i, n) => {
     if (i.kind === "accept") {
       const c = S.candidates.find((x) => x.id === i.target);
@@ -532,6 +534,7 @@ function renderRight() {
   const live = S.candidates.filter((c) => !["superseded", "accepted"].includes(c.status)).length;
   $("#outCount").textContent = live; $("#outCount").classList.toggle("zero", live === 0);
   $("#rightBody").innerHTML = tab === "inbox" ? inboxHtml() : tab === "outcomes" ? outcomesHtml() : inspectHtml();
+  $("#modeAside").textContent = [S.policy?.decider === "agents" ? "agents decide" : "you decide", S.policy?.autoAccept ? "auto-accept" : ""].filter(Boolean).join(", ");
 }
 
 // ---------- actions ----------
@@ -639,6 +642,46 @@ function checksConfigHtml() {
     ${c.protected.length ? `<dt>Needs a human</dt><dd class="id">${c.protected.map(esc).join("<br>")}</dd>` : ""}</dl></div>`;
 }
 
+const FLOOR_HUMAN = [".nest/"];
+
+/** Who settles reviews and whether ready outcomes ship on their own: the project's review policy. */
+function decidingHtml() {
+  const pol = P.policy;
+  if (!pol) return "";
+  const agents = pol.decider === "agents";
+  const handedOver = agents && pol.humanPaths.length <= FLOOR_HUMAN.length;
+  const view = `<dl class="kv">
+    <dt>Reviews</dt><dd>${agents ? "Agents decide. Unanimous and confident, with one more model family when they split; then you." : "You settle what agent reviewers cannot: disagreements, low confidence, protected files."}</dd>
+    <dt>Accepting</dt><dd>${pol.autoAccept ? "Ready outcomes are accepted, and deployed, automatically. A choice between competing work still comes to you." : "You accept every checkpoint."}</dd>
+    <dt>Always yours</dt><dd>Changes to <span class="id">.nest/</span>, guard hits, and changes reviewers could not fully see${agents && !handedOver ? `; also <span class="id">${pol.humanPaths.filter((x) => !FLOOR_HUMAN.includes(x)).slice(0, 4).map(esc).join(", ")}</span> and other build files` : ""}</dd></dl>`;
+  const form = owner() ? `<form class="decide" id="decide">
+    <fieldset><legend>Reviews</legend>
+      <label><input type="radio" name="decider" value="human" ${agents ? "" : "checked"}> Ask me when it matters</label>
+      <label><input type="radio" name="decider" value="agents" ${agents ? "checked" : ""}> Let agents decide</label></fieldset>
+    <label class="check"><input type="checkbox" name="build" ${handedOver ? "checked" : ""}> Agents may also approve dependency and build changes</label>
+    <p class="hint warn">A dependency or build change runs code in the project's build, which can deploy Workers. Hand it over only if you trust the reviewers with that.</p>
+    <label class="check"><input type="checkbox" name="auto" ${pol.autoAccept ? "checked" : ""}> Accept ready outcomes automatically</label>
+    <div class="row"><button class="btn small primary" type="submit">Save as a new policy version</button></div></form>` : "";
+  return `<div class="card"><h4>How work is decided</h4>${view}${form}</div>`;
+}
+
+function savePolicy(form) {
+  const item = P.context.find((i) => i.id === "policy/review-routing");
+  const decider = form.querySelector('input[name="decider"]:checked')?.value ?? "human";
+  const build = form.querySelector('input[name="build"]').checked;
+  const auto = form.querySelector('input[name="auto"]').checked;
+  const block = { ...(item?.policy ?? {}), decider, autoAccept: auto };
+  if (decider === "agents" && build) block.humanPaths = [...FLOOR_HUMAN];
+  else delete block.humanPaths;
+  const said = [
+    decider === "agents" ? "Agents decide reviews: unanimous and confident, with one more model family when they split, then a human." : "A human settles what agent reviewers cannot.",
+    decider === "agents" && build ? "Agents may also approve dependency and build changes." : "Dependency and build changes need a human.",
+    auto ? "Ready outcomes are accepted automatically, except a choice between competing work." : "A human accepts every checkpoint.",
+  ].join(" ");
+  const body = `${said}\n\n\`\`\`nest-policy\n${JSON.stringify(block, null, 2)}\n\`\`\``;
+  return act(() => api(`/api/p/${P.project.id}/context`, { method: "POST", body: JSON.stringify({ id: "policy/review-routing", kind: "policy", title: "How work is reviewed and accepted", body }) }), `Policy version ${(item?.version ?? 0) + 1} accepted`);
+}
+
 function renderProject() {
   if (!P.head) {
     $("#page").innerHTML = `<div class="empty wide"><h4>Waiting for the code</h4><p>This project's repository in Artifacts is empty. ${owner() ? "Push your code to its main branch, then check again." : "The owner pushes the first commit."}</p>
@@ -651,6 +694,7 @@ function renderProject() {
     <aside class="proj-side">
       <div class="card"><div class="row" style="justify-content:space-between"><h4>Objectives</h4>${owner() ? `<button class="btn small" data-newobj="${esc(P.project.id)}" type="button">New objective</button>` : ""}</div>
         <ul class="objs">${P.objectives.map((o) => `<li><a href="/o/${esc(o.id)}"><span class="t">${esc(o.title)}</span><span class="id">${esc(o.id)}</span></a></li>`).join("") || `<li class="none">None yet. An objective is a goal with its own tasks, agents and outcomes.</li>`}</ul></div>
+      ${decidingHtml()}
       ${checksConfigHtml()}
       <section class="history" aria-label="Checkpoint history"><h3>Checkpoints</h3><ol>${cps.map((cp) => `<li class="${cp.version === P.head.version ? "now" : ""}"><span class="v">${cp.version}</span><div><b>${esc(cp.reason)}</b><span class="meta"><span class="id">${esc(cp.commit.slice(0, 7))}</span> ${esc(timeOf(cp.createdAt))}</span></div></li>`).join("")}</ol></section>
     </aside></div>`;
@@ -872,6 +916,12 @@ document.addEventListener("click", (e) => {
     const body = $("#ctx-next").value;
     return act(() => api(`/api/p/${S.objective.project}/context`, { method: "POST", body: JSON.stringify({ id: t.dataset.ctxchange, body }) }), "New version accepted");
   }
+});
+
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "decide") return;
+  e.preventDefault();
+  savePolicy(e.target);
 });
 
 document.addEventListener("keydown", (e) => {

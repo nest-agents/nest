@@ -25,6 +25,9 @@ export function parseContextFile(path: string, text: string, commit: string): Co
         ...(num(raw.agentReviewers) !== undefined ? { agentReviewers: num(raw.agentReviewers) } : {}),
         ...(num(raw.minConfidence) !== undefined ? { minConfidence: num(raw.minConfidence) } : {}),
         ...(strings(raw.protectedPaths) ? { protectedPaths: strings(raw.protectedPaths) } : {}),
+        ...(raw.decider === "agents" || raw.decider === "human" ? { decider: raw.decider } : {}),
+        ...(strings(raw.humanPaths) ? { humanPaths: strings(raw.humanPaths) } : {}),
+        ...(typeof raw.autoAccept === "boolean" ? { autoAccept: raw.autoAccept } : {}),
       };
     } catch { policy = null; }
   }

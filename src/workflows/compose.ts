@@ -8,6 +8,7 @@ import { artifactsRemote, candidateBranch, objectiveStub, projectRepo, projectSt
 import type { ObjectiveDO } from "../objective";
 import { CONFIG_PATH, ConfigError, previewUrl, requiredChecks, type ProjectConfig } from "../projectconfig";
 import { readProjectConfig } from "../projects";
+import { acceptCandidate } from "../accepting";
 import { sha256Hex } from "../protocol";
 
 /** `only` recomposes exactly these outcomes (an owner's request), instead of the planner's top three. */
@@ -269,7 +270,36 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     };
 
     const results = await Promise.all(plan.planned.map(verify));
-    return { composed: results.length, results };
+
+    // A human can let Nest accept ready outcomes. Never one that chooses between competing approaches or
+    // overlapping work: that choice is a human's. The head moves by the same compare-and-swap as a human's.
+    const auto = await step.do("accept automatically", { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "5 minutes" }, async () => {
+      const state = await objective.state();
+      if (!state.policy.autoAccept) return { accepted: null as string | null, skipped: [] as string[] };
+      const head = await projectStub(env, plan.project).head();
+      if (!head || head.version !== plan.head.version) return { accepted: null, skipped: [] };
+      const rank = new Map(plan.planned.map((c, i) => [c.id, i]));
+      const ready = state.candidates
+        .filter((c) => c.status === "ready" && c.baseVersion === head.version)
+        .sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99));
+      const skipped: string[] = [];
+      for (const c of ready) {
+        if (Object.keys(c.choice).some((g) => !g.startsWith("replace:"))) {
+          skipped.push(c.id);
+          continue;
+        }
+        try {
+          const r = await acceptCandidate(env, objectiveId, c.id, head.version, null, "Accepted automatically: every check passed and every contribution was approved");
+          await objective.log("Nest", "auto-accept", `Accepted ${c.name} automatically, as this project's policy allows`, { candidate: c.id, checkpoint: r.checkpoint.version });
+          return { accepted: c.id, skipped };
+        } catch (e) {
+          await objective.log("Nest", "auto-accept", `Could not accept ${c.name} automatically: ${String((e as Error)?.message ?? e).slice(0, 200)}`, { candidate: c.id });
+        }
+      }
+      if (skipped.length) await objective.log("Nest", "auto-accept", `${skipped.length === 1 ? "An outcome is" : `${skipped.length} outcomes are`} ready but choose${skipped.length === 1 ? "s" : ""} between competing work, so a human decides`);
+      return { accepted: null, skipped };
+    });
+    return { composed: results.length, results, autoAccepted: auto.accepted };
   }
 }
 

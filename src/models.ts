@@ -10,6 +10,9 @@ const PRICES: Record<string, { in: number; out: number }> = {
   "anthropic/claude-sonnet-5.5": { in: 2, out: 10 },
   "anthropic/claude-opus-5.5": { in: 4, out: 20 },
   "@cf/openai/gpt-oss-120b": { in: 0.35, out: 0.75 },
+  // Workers AI catalog prices, rounded up.
+  "@cf/deepseek-ai/deepseek-v4-flash-0731": { in: 0.5, out: 1.5 },
+  "@cf/zai-org/glm-5.3": { in: 1.5, out: 4.5 },
 };
 // Far above any listed price, so a reservation for an unlisted model is still an upper bound. Agents
 // never reach it: Outbound only lets them call the configured, priced models.
