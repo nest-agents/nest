@@ -43,7 +43,7 @@ export const gatewayHeaders = (env: Env): Record<string, string> => ({ "cf-aig-a
 export const providerTarget = (env: Env, provider: "openai" | "openrouter", rest: string) => `${gatewayBase(env)}/${provider}/${rest}`;
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
-export type ChatResult = { text: string; inputTokens: number; outputTokens: number; model: string };
+export type ChatResult = { text: string; inputTokens: number; outputTokens: number; model: string; finish: string | null; reasoningChars: number };
 
 /**
  * One chat call through AI Gateway, reserved against the objective's spend cap first and settled with
@@ -62,13 +62,16 @@ export async function chat(
 
   if (route.provider === "workers-ai") {
     const options = { gateway: { id: env.AI_GATEWAY_ID, metadata: opts.metadata ?? {} } };
-    const out = (await env.AI.run(route.model as keyof AiModels, { messages, max_tokens: maxTokens } as never, options as never)) as { response?: string; choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
-    const text = out.response ?? out.choices?.[0]?.message?.content ?? "";
+    const out = (await env.AI.run(route.model as keyof AiModels, { messages, max_tokens: maxTokens } as never, options as never)) as {
+      response?: string; choices?: { finish_reason?: string; message?: { content?: string; reasoning_content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const choice = out.choices?.[0];
+    const text = out.response ?? choice?.message?.content ?? "";
     const inT = out.usage?.prompt_tokens ?? promptTokens;
     const outT = out.usage?.completion_tokens ?? Math.ceil(text.length / 4);
     const p = priceFor(route.model);
     await opts.settle(id, inT * p.inPerToken + outT * p.outPerToken);
-    return { text, inputTokens: inT, outputTokens: outT, model: route.model };
+    return { text, inputTokens: inT, outputTokens: outT, model: route.model, finish: choice?.finish_reason ?? null, reasoningChars: (choice?.message?.reasoning_content ?? "").length };
   }
 
   const url = providerTarget(env, route.provider, route.provider === "openai" ? "chat/completions" : "v1/chat/completions");
@@ -89,17 +92,18 @@ export async function chat(
       ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
-  const body = (await res.json().catch(() => ({}))) as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number }; error?: { message?: string } };
+  const body = (await res.json().catch(() => ({}))) as { choices?: { finish_reason?: string; message?: { content?: string; reasoning_content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number }; error?: { message?: string } };
   if (!res.ok) {
     await opts.settle(id, 0);
     throw new Error(`model ${route.model} returned ${res.status}: ${body.error?.message ?? ""}`.slice(0, 400));
   }
-  const text = body.choices?.[0]?.message?.content ?? "";
+  const choice = body.choices?.[0];
+  const text = choice?.message?.content ?? "";
   const inT = body.usage?.prompt_tokens ?? promptTokens;
   const outT = body.usage?.completion_tokens ?? Math.ceil(text.length / 4);
   const p = priceFor(route.model);
   await opts.settle(id, inT * p.inPerToken + outT * p.outPerToken);
-  return { text, inputTokens: inT, outputTokens: outT, model: route.model };
+  return { text, inputTokens: inT, outputTokens: outT, model: route.model, finish: choice?.finish_reason ?? null, reasoningChars: (choice?.message?.reasoning_content ?? "").length };
 }
 
 /**

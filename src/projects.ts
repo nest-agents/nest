@@ -97,14 +97,13 @@ async function waitForHead(env: Env, repo: string, seconds: number): Promise<str
  * Nest works on `main`. An imported repository may keep its history on another branch (`master`, say):
  * the project's mirror computer, which never runs project code, creates `main` from the default branch.
  */
-async function ensureMain(env: Env, project: string): Promise<boolean> {
+async function ensureMain(env: Env, project: string): Promise<{ ok: boolean; detail: string }> {
   const name = `mirror.${project}`;
   const mirror = env.COMPUTERS.getByName(name);
   await mirror.configure({ computer: name, role: "mirror", project, objective: "-" });
   const remote = artifactsRemote(env, projectRepo(project));
   const r = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
-  if (r.exitCode !== 0) console.warn(`could not create main for ${project}: ${r.stderr.slice(0, 300)}`);
-  return r.exitCode === 0;
+  return { ok: r.exitCode === 0, detail: r.exitCode === 0 ? "created main from the default branch" : `could not create main: ${r.stderr.slice(-300)}` };
 }
 
 /** Context items already in a project's context repository, so a project keeps its history. */
@@ -179,9 +178,14 @@ export async function bootstrapProject(env: Env, id: string, waitSeconds = 5) {
     const artifacts = new ArtifactsClient(env.ARTIFACTS);
     using repo = await env.ARTIFACTS.get(projectRepo(id));
     const info = await repo.info();
-    if ((info.source || info.lastPushAt) && (await ensureMain(env, id))) commit = await artifacts.head(projectRepo(id)).catch(() => null);
+    let detail = `source ${info.source ?? "none"}, last push ${info.lastPushAt ?? "never"}`;
+    if (info.source || info.lastPushAt) {
+      const made = await ensureMain(env, id);
+      detail += `; ${made.detail}`;
+      if (made.ok) commit = await artifacts.head(projectRepo(id)).catch(() => null);
+    }
+    if (!commit) throw new RegistryError("NO_CODE_YET", `no commit on the main branch of ${projectRepo(id)} yet (${detail}): push one, or wait for the import to finish`);
   }
-  if (!commit) throw new RegistryError("NO_CODE_YET", `no commit on the main branch of ${projectRepo(id)} yet: push one, or wait for the import to finish`);
   // Validate before the first checkpoint exists: a malformed configuration is the owner's to fix now.
   const config = await readProjectConfig(env, id, commit);
   const head = await project.bootstrap(commit, await readContext(env, id));

@@ -171,16 +171,16 @@ async function api(request: Request, env: Env, url: URL, p: Principal): Promise<
   if (route === "POST /api/admin/models/probe") {
     // One short, metered call to a priced model, to confirm it answers and returns parseable JSON.
     require(p, "owner");
-    const b = await body<{ model: string; provider?: "openai" | "openrouter" | "workers-ai" }>(request);
+    const b = await body<{ model: string; provider?: "openai" | "openrouter" | "workers-ai"; promptChars?: number; maxTokens?: number }>(request);
     if (!isPriced(String(b.model))) throw new HttpError(400, "UNPRICED_MODEL", "only models with an exact price may be probed");
     const ledger = registryStub(env);
     const started = Date.now();
     try {
       const r = await chat(env, { provider: b.provider ?? "workers-ai", model: b.model }, [
         { role: "system", content: 'Reply with JSON only: {"verdict":"approve","confidence":0.9,"summary":"one short sentence"}' },
-        { role: "user", content: "Review this change: it fixes a typo in a README." },
-      ], { maxTokens: 2000, reserve: (id, micro, model) => ledger.reserveSpend(id, null, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)), settle: (id, micro) => ledger.settleSpend(id, micro), metadata: { role: "probe" } });
-      return json({ ok: true, model: b.model, ms: Date.now() - started, parsed: parseJsonReply(r.text, "verdict"), tokens: { in: r.inputTokens, out: r.outputTokens }, text: r.text.slice(0, 300) });
+        { role: "user", content: `Review this change: it fixes a typo in a README.${b.promptChars ? `\n\nContext:\n${"const x = 1;\n".repeat(Math.min(Number(b.promptChars), 400_000) / 13)}` : ""}` },
+      ], { maxTokens: Math.min(Number(b.maxTokens) || 2000, 16_000), reserve: (id, micro, model) => ledger.reserveSpend(id, null, null, model, micro, Number(env.SPEND_CAP_MICRO_USD)), settle: (id, micro) => ledger.settleSpend(id, micro), metadata: { role: "probe" } });
+      return json({ ok: true, model: b.model, ms: Date.now() - started, parsed: parseJsonReply(r.text, "verdict"), tokens: { in: r.inputTokens, out: r.outputTokens }, finish: r.finish, reasoningChars: r.reasoningChars, text: r.text.slice(0, 300) });
     } catch (e) {
       return json({ ok: false, model: b.model, error: String((e as Error)?.message ?? e).slice(0, 400) });
     }
@@ -220,11 +220,12 @@ async function projectApi(request: Request, env: Env, p: Principal, projectId: s
     try {
       return json(await bootstrapProject(env, projectId, 10));
     } catch (e) {
-      if (!/^NO_CODE_YET/.test(String((e as Error)?.message))) throw e;
+      const m = String((e as Error)?.message);
+      if (!/^NO_CODE_YET/.test(m)) throw e;
       // Still empty: a fresh token to push the first commit with.
       const token = await new ArtifactsClient(env.ARTIFACTS).token(record.repo, "write", 3600);
       using r = await env.ARTIFACTS.get(record.repo);
-      return json({ head: null, push: { remote: (await r.info()).remote, token: token.secret, expiresAt: token.expiresAt } });
+      return json({ head: null, why: m.replace(/^NO_CODE_YET:\s*/, ""), push: { remote: (await r.info()).remote, token: token.secret, expiresAt: token.expiresAt } });
     }
   }
   if (route === "POST /context") {

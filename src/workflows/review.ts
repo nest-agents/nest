@@ -178,7 +178,7 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
               const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: reviewer.family === "anthropic" ? 4000 : openai ? 6000 : 10_000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
               parsed = parseJsonReply<Verdictish>(r.text, "verdict");
               reply = r.text;
-              if (!parsed) note = `Reviewer reply was not a verdict${reply.trim() ? `: ${reply.trim().slice(0, 240)}` : " (empty reply)"}`;
+              if (!parsed) note = `Reviewer reply was not a verdict${reply.trim() ? `: ${reply.trim().slice(0, 240)}` : ` (empty reply; finish ${r.finish ?? "unknown"}, ${r.outputTokens} output tokens, ${r.reasoningChars} reasoning characters)`}`;
             } catch (e) {
               note = `Reviewer unavailable: ${String(e).slice(0, 200)}`;
             }
