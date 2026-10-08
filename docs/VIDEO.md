@@ -23,6 +23,24 @@ MCP**, then **scale**. Each act answers one judging criterion with a live run, n
 - Create the objective and context below **just before** recording, not earlier: the tasks are consumed
   once accepted.
 
+### Screen Studio settings
+
+- New recording → **Display** (the whole screen), so the browser and the terminal in act 5 are in one
+  take with no window switching. Microphone on; narrate live and stay silent during waits. System audio off.
+- Editor, Background and Screen: background **Color**, padding **0**, rounded corners 0, shadow off. The
+  product fills the frame; no wallpaper. Aspect ratio **Wide**, "Always keep zoomed in" off.
+- Zooms: Screen Studio adds an auto zoom at every click. Delete most of them and keep zooms only where the
+  eye needs help: the Inspector (act 2), Needs you, the Accept reason, the policy card (act 4), the
+  terminal (act 5). The ripple in act 3 has no click: add a **Manual** zoom on the context rail.
+- Cursor: size slightly larger than default, "Hide cursor if it's not moving" and "Remove cursor shakes"
+  on; mouse click sound off.
+- Typing: apply the typing speed-up to all typing parts (the requirement text and the four tasks).
+- Waits: cut them. Screen Studio has no speed control for ordinary segments, and the activity log on
+  screen carries real timestamps, so "accepted at 14:03, deployed at 14:04" is visible without a label.
+- Export: MP4, 60 fps, 1080p for the upload (4K takes four times longer; export it after, if there is time).
+- Settings → Editing → "Use last project settings as default for new recordings" on, so the scale run and
+  the main recording match.
+
 ## The objective (act 2)
 
 From the Beacon project page, Add to context, kind Requirement:
