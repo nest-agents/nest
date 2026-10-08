@@ -175,9 +175,11 @@ export async function bootstrapProject(env: Env, id: string, waitSeconds = 5) {
   if (existing) return { head: existing, config: await readProjectConfig(env, id, existing.commit) };
   let commit = await waitForHead(env, projectRepo(id), waitSeconds);
   if (!commit) {
+    // The binding cannot list branches, but an import source or a push means history exists somewhere.
     const artifacts = new ArtifactsClient(env.ARTIFACTS);
-    const any = await artifacts.head(projectRepo(id), "HEAD").catch(() => null);
-    if (any && (await ensureMain(env, id))) commit = await artifacts.head(projectRepo(id)).catch(() => null);
+    using repo = await env.ARTIFACTS.get(projectRepo(id));
+    const info = await repo.info();
+    if ((info.source || info.lastPushAt) && (await ensureMain(env, id))) commit = await artifacts.head(projectRepo(id)).catch(() => null);
   }
   if (!commit) throw new RegistryError("NO_CODE_YET", `no commit on the main branch of ${projectRepo(id)} yet: push one, or wait for the import to finish`);
   // Validate before the first checkpoint exists: a malformed configuration is the owner's to fix now.
