@@ -94,6 +94,9 @@ only once reviewers approve it.
 
 **Routing fails closed.**
 - Policy floors (protected paths, reviewer count, confidence) cannot be lowered by policy.
+- A protected rule ending in `/` is a directory, a rule with a `/` inside is one exact path, and a rule
+  without one names that file anywhere in the tree, because a nested `package.json` or `.npmrc` also decides
+  what an install runs.
 - These go to a human: unusual paths (non-canonical, non-ASCII, trailing dots or spaces, `..`), symlinks,
   submodules, unreadable files and oversized changes.
 
