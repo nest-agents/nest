@@ -2,7 +2,7 @@
 
 import { acceptError, type CandidateFacts } from "./domain/accept";
 import { parseContextFile, renderContextFile } from "./context";
-import { artifactsRemote, candidateBranch, contextRepo, objectiveStub, projectRepo, projectStub, registryStub, short } from "./names";
+import { artifactsRemote, candidateRef, contextRepo, objectiveStub, projectRepo, projectStub, registryStub, short } from "./names";
 import { requiredChecks } from "./projectconfig";
 import { readProjectConfig, refreshPolicies } from "./projects";
 
@@ -80,7 +80,7 @@ export async function acceptCandidate(env: Env, objectiveId: string, candidateId
   const mirror = env.COMPUTERS.getByName(name);
   await mirror.configure({ computer: name, role: "mirror", project: projectId, objective: objectiveId });
   const remote = artifactsRemote(env, projectRepo(projectId));
-  const mirrored = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateBranch(candidateId)} && git merge --ff-only --quiet ${c.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
+  const mirrored = await mirror.exec(["bash", "-lc", `rm -rf /workspace/main && git clone --quiet ${remote} /workspace/main && cd /workspace/main && git fetch --quiet origin ${candidateRef(candidateId)} && git merge --ff-only --quiet ${c.commit} && git push --quiet origin HEAD:refs/heads/main`], "/workspace", {}, 180).catch((e) => ({ exitCode: 1, stdout: "", stderr: String(e) }));
   await objective.log("Artifacts", "mirror", mirrored.exitCode === 0
     ? `Fast-forwarded ${projectId} main to ${c.commit.slice(0, 7)}${config.production ? `; production deploys from main to ${config.production}` : ""}`
     : `Main will catch up: ${mirrored.stderr.slice(0, 200)}`);

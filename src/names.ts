@@ -19,6 +19,12 @@ export function parseWorkspaceRepo(name: string): { objective: string; generatio
   return m ? { objective: m[1]!, generation: m[2]!, task: m[3]!, epoch: Number(m[4]) } : null;
 }
 
+/**
+ * Every composed outcome is kept at a ref no deploy pipeline builds. The `cand-<id>` branch, which the
+ * project's Workers Builds turns into a Preview, exists only for an outcome whose every contribution is
+ * approved, so unreviewed code never reaches a build.
+ */
+export const candidateRef = (id: string) => `refs/nest/cand/${id}`;
 export const candidateBranch = (id: string) => `cand-${id}`;
 
 /** One computer per workspace, so an attempt never finds an agent left running by another attempt. */

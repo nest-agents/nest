@@ -11,7 +11,7 @@ import { buildPack, searchContext } from "./packs";
 import { ConfigError } from "./projectconfig";
 import { bootstrapProject, createObjective, createProject, readProjectConfig } from "./projects";
 import { OBJECTIVE_ID, PROJECT_ID } from "./registry";
-import { reconcileConflict, startTask, stopTask } from "./tasks";
+import { reconcileConflict, requestCompose, startTask, stopTask } from "./tasks";
 
 export { RegistryDO } from "./registry";
 export { ProjectDO } from "./project";
@@ -341,7 +341,10 @@ async function objectiveApi(request: Request, env: Env, url: URL, p: Principal, 
     require(p, "owner");
     const b = await body<{ target: string; verdict: "approve" | "changes" | "block" | "comment"; summary: string }>(request);
     const id = `rv-you-${crypto.randomUUID().slice(0, 8)}`;
-    return json(await objective.addReview({ id, target: b.target, reviewer: "you", verdict: b.verdict, confidence: 1, summary: String(b.summary ?? "").slice(0, 4000), findings: [], triage: false }));
+    const out = await objective.addReview({ id, target: b.target, reviewer: "you", verdict: b.verdict, confidence: 1, summary: String(b.summary ?? "").slice(0, 4000), findings: [], triage: false });
+    // A human's verdict can complete an outcome's approvals, which releases its preview build.
+    await requestCompose(env, objectiveId, "a human reviewed");
+    return json(out);
   }
 
   const resolve = /^\/inbox\/([a-z0-9_-]{3,80})\/resolve$/.exec(rest);

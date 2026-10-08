@@ -25,7 +25,9 @@ every HTTP and HTTPS request is intercepted.
 - **Git.** Only git's three smart-HTTP request shapes are allowed, with exact methods and content types.
   Each computer role may update exactly one ref, checked in the receive-pack pkt-lines:
   - agents: their workspace's `main`;
-  - runners: `cand-<id>` in their project's repository;
+  - runners: `refs/nest/cand/<id>` in their project's repository, and the buildable branch `cand-<id>` only
+    when every contribution in the outcome is approved (decided by Nest before the runner starts, and part
+    of the props `Outbound` checks);
   - the mirror computer: their project's `main`;
   - the context computer: their project's context repository.
 
@@ -57,10 +59,19 @@ a test can weaken that test; that is why tests are reviewed like code, and why p
 Check output is untrusted: it is shown escaped, and when it reaches an agent in a repair brief it is wrapped
 in a random data boundary.
 
+**Unreviewed code never reaches a build.** A project's pipeline (Workers Builds) builds every branch, and a
+build installs dependencies and holds a token that can deploy Workers. So every composed outcome is kept at
+`refs/nest/cand/<id>`, which no pipeline builds, and its `cand-<id>` branch is pushed only once every
+contribution in it is approved. Anything that decides how a project is installed, built or deployed
+(`package.json`, every lockfile, `.npmrc` and other package-manager configuration, Wrangler configuration,
+`.nest/`) is always a protected path, so a change that could run code in a build needs a human's approval
+before any build sees it. A project adds its own build inputs, such as Dockerfiles, to `protected`.
+
 **Previews are the project's own deployments.** Nest no longer serves candidate code on its own origin. Each
-outcome is a Preview of the project's Worker on the project's own hostname, with Preview-only storage.
-Browser Rendering opens it in a browser that holds no Nest credentials and judges only what the browser saw:
-the HTTP status and uncaught page errors.
+outcome is a Preview of the project's Worker on the project's own hostname. Preview settings must use
+Preview-only resources and no production secrets; Durable Object storage is separate per Preview
+automatically. Browser Rendering opens the Preview in a browser that holds no Nest credentials and judges
+only what the browser saw: the HTTP status and uncaught page errors.
 
 **Identity is derived, never declared.**
 - A review's reviewer kind and model family come from the participant registry, and both are immutable once
@@ -128,6 +139,7 @@ could be written:
 - policy floors; fencing races; superseding another participant's work;
 - injection guard bypasses (truncation, look-alikes, comments);
 - check output from contributed code reaching an agent's brief unwrapped;
+- unreviewed compositions pushed to a branch the project's pipeline builds;
 - retirement inferred from flag text;
 - a negative SQL `LIMIT` read as unlimited.
 

@@ -16,7 +16,11 @@ export type ReviewPolicy = {
 export const FLOOR = {
   agentReviewers: 1,
   minConfidence: 0.5,
-  protectedPaths: [".nest/", "wrangler.jsonc", "wrangler.toml", "package.json", "pnpm-lock.yaml", "package-lock.json"],
+  // What decides how a project is installed, built and deployed: a change here can run code in a build.
+  protectedPaths: [
+    ".nest/", "wrangler.jsonc", "wrangler.json", "wrangler.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+    "bun.lock", "bun.lockb", ".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "pnpm-workspace.yaml", "bunfig.toml",
+  ],
 } as const;
 
 export const DEFAULT_POLICY: ReviewPolicy = {

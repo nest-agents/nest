@@ -79,7 +79,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         head: { version: head.version, commit: head.commit, contextDigest: head.contextDigest, policyDigest: head.policyDigest },
         config, configError, planned,
         picks: Object.fromEntries(state.contributions.map((c) => [c.id, { repo: c.repo, commit: c.commit, title: c.title, author: c.author, status: c.status }])),
-        existing: state.candidates.map((c) => ({ id: c.id, status: c.status })),
+        existing: state.candidates.map((c) => ({ id: c.id, status: c.status, previewPending: c.checks.some((k) => k.id === "preview" && k.status === "PENDING") })),
+        approved: state.contributions.filter((c) => c.status === "approved").map((c) => c.id),
       };
     });
 
@@ -97,16 +98,20 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       });
     }
 
-    /** Composes `order` onto the head in a fresh runner, runs the project's own setup and checks, and destroys the runner. */
-    const runOn = async (id: string, order: string[]) => {
+    /**
+     * Composes `order` onto the head in a fresh runner, runs the project's own setup and checks, and destroys
+     * the runner. `publish` pushes the branch the project's pipeline builds as a Preview; it is true only when
+     * every contribution in the outcome is approved, so unreviewed code never reaches a build.
+     */
+    const runOn = async (id: string, order: string[], publish: boolean) => {
       const name = `runner-${id}`;
       const computer = env.COMPUTERS.getByName(name);
       try {
         const result = await computer.compose(
-          { computer: name, role: "runner", project: plan.project, objective: objectiveId, candidate: id },
+          { computer: name, role: "runner", project: plan.project, objective: objectiveId, candidate: id, publish },
           { remote: artifactsRemote(env, projectRepo(plan.project)), commit: plan.head.commit },
           order.map((cid) => ({ id: cid, remote: artifactsRemote(env, plan.picks[cid]!.repo), commit: plan.picks[cid]!.commit })),
-          candidateBranch(id),
+          candidateBranch(id), publish,
         );
         if (!result.ok) return { result, checks: [] as Check[] };
         const composed: Check = {
@@ -154,7 +159,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
     let baseline: Check[] | null = await step.do(`checkpoint ${plan.head.version}: known baseline`, async () => objective.baseline(baselineKey));
     if (!baseline) {
       const own = await step.do(`checkpoint ${plan.head.version}: compose and check`, { retries: { limit: 3, delay: "30 seconds", backoff: "linear" }, timeout: "30 minutes" }, async () => {
-        const r = await runOn(baselineId, []);
+        // The checkpoint was accepted, so its own preview may be built.
+        const r = await runOn(baselineId, [], !!plan.config?.preview);
         if (!r.result.ok) throw new Error(`checkpoint ${plan.head.version} did not check out on its own: ${r.result.detail.slice(0, 300)}`);
         return r.checks;
       });
@@ -188,7 +194,10 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const verify = async (c: (typeof plan.planned)[number]) => {
       const prior = plan.existing.find((e) => e.id === c.id);
-      if (prior && !["composing", "checking", "outdated"].includes(prior.status)) return { id: c.id, skipped: prior.status };
+      // A waiting outcome whose preview held for approval is composed again once every member is approved.
+      const nowApproved = c.order.every((id) => plan.approved.includes(id));
+      const unblocked = prior?.status === "waiting" && prior.previewPending && nowApproved;
+      if (prior && !["composing", "checking", "outdated"].includes(prior.status) && !unblocked) return { id: c.id, skipped: prior.status };
 
       const composed = await step.do(`compose ${c.id}`, { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "30 minutes" }, async () => {
         const note = c.reusedAcross.length
@@ -200,7 +209,9 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           previewReady: false, note, conflict: null,
         });
         await objective.log("Workflows", "candidate", `Composer planned ${c.name}: ${c.order.map(short).join(" + ")}`, { candidate: c.id });
-        const r = await runOn(c.id, c.order);
+        const fresh = await objective.state();
+        const approved = c.order.every((id) => fresh.contributions.find((x) => x.id === id)?.status === "approved");
+        const r = await runOn(c.id, c.order, approved && !!plan.config?.preview);
         const result = r.result;
         // A conflict names the files git could not merge. Anything else (clone, fetch, push) is ours: retry.
         if (!result.ok && (!result.paths.length || ["clone", "base", "push"].includes(result.at))) throw new Error(`composition failed at ${result.at}: ${result.detail.slice(0, 300)}`);
@@ -225,19 +236,22 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
           svc: "Sandbox",
           text: `Composed ${c.name} with real git and ran the project's checks: ${passed} of ${r.checks.length} passed${plan.config?.preview ? "; waiting for its preview deployment" : ""}`,
         });
-        return { ok: true as const, commit: result.commit, checks: r.checks };
+        return { ok: true as const, commit: result.commit, checks: r.checks, published: result.published };
       });
       if (!composed.ok) return { id: c.id, conflict: true };
 
-      const preview = await previewCheck(c.id);
+      const preview: Check | null = !plan.config?.preview ? null
+        : composed.published ? await previewCheck(c.id)
+        : { id: "preview", status: "PENDING", detail: "The preview is built once every contribution in this outcome is approved, so unreviewed code never reaches a build" };
 
       return step.do(`settle ${c.id}`, async () => {
         const checks = [...composed.checks, ...(preview ? [preview] : [])];
-        const failed = checks.filter((x) => x.status !== "PASS");
+        const failed = checks.filter((x) => x.status !== "PASS" && x.status !== "PENDING");
         const state = await objective.state();
         const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
         const broken = failed.filter((f) => passingAtHead.has(f.id));
-        const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved ? "ready" : "waiting";
+        const pending = checks.some((x) => x.status === "PENDING");
+        const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved && !pending ? "ready" : "waiting";
         await objective.updateCandidate(c.id, { status, commit: composed.commit, checks: withHead(checks), previewReady: preview?.status === "PASS", conflict: null }, {
           svc: preview ? "Browser Rendering" : "Sandbox",
           text: `${c.name}: ${checks.length - failed.length} of ${checks.length} checks passed${failed.length ? `; ${failed.map((f) => f.id).join(", ")} failed` : ""}`,

@@ -420,8 +420,8 @@ const previewLink = (c) => { const h = previewHref(c); return h ? `<a class="btn
 function checksHtml(c) {
   if (!c.checks.length) return `<div class="checks"><span style="font-size:12.5px;color:var(--muted)">Checks not run yet</span></div>`;
   const pass = c.checks.filter((k) => k.status === "PASS").length;
-  const kind = (k) => (k.status === "PASS" ? "pass" : k.atHead && k.atHead !== "PASS" ? "todo" : "fail");
-  const says = { pass: "passes", todo: "not done yet", fail: "broken" };
+  const kind = (k) => (k.status === "PASS" ? "pass" : k.status === "PENDING" ? "pend" : k.atHead && k.atHead !== "PASS" ? "todo" : "fail");
+  const says = { pass: "passes", pend: "waits for approval", todo: "not done yet", fail: "broken" };
   return `<div class="checks">${c.checks.map((k) => `<span class="chk ${kind(k)}" title="${esc(k.id)}: ${says[kind(k)]}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${pass} of ${c.checks.length} checks</span></div>`;
 }
 
@@ -487,7 +487,7 @@ function outcomeCard(c) {
   return `
     <div class="card ${c.id === selCand ? "focus" : ""}"><div class="row" style="justify-content:space-between"><h4>${esc(c.name)}</h4><span class="status ${c.status === "ready" ? "ready" : c.status === "outdated" ? "outdated" : ""}">${esc(statusLabel[c.status] ?? c.status)}</span></div>
     <div class="row"><span class="id" style="color:var(--muted)">${esc(c.id)}</span><span style="font-size:12.5px;color:var(--muted)">on checkpoint ${c.baseVersion}</span></div>
-    ${checksHtml(c)}${c.checks.filter((k) => k.status !== "PASS").sort((a, b) => Number(b.atHead === "PASS") - Number(a.atHead === "PASS")).map((k) => `<div class="fail-line ${k.atHead === "PASS" ? "" : "todo"}"><b>${esc(k.id)}</b> ${k.atHead === "PASS" ? "Broken: passes on the checkpoint, fails here. " : k.atHead ? "Not done yet. " : ""}${esc(k.detail)}</div>`).join("")}
+    ${checksHtml(c)}${c.checks.filter((k) => k.status === "PENDING").map((k) => `<div class="fail-line todo"><b>${esc(k.id)}</b> ${esc(k.detail)}</div>`).join("")}${c.checks.filter((k) => k.status !== "PASS" && k.status !== "PENDING").sort((a, b) => Number(b.atHead === "PASS") - Number(a.atHead === "PASS")).map((k) => `<div class="fail-line ${k.atHead === "PASS" ? "" : "todo"}"><b>${esc(k.id)}</b> ${k.atHead === "PASS" ? "Broken: passes on the checkpoint, fails here. " : k.atHead ? "Not done yet. " : ""}${esc(k.detail)}</div>`).join("")}
     ${c.conflict ? `<div class="fail-line">${esc(c.conflict)}</div>` : ""}
     ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>

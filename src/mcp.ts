@@ -5,7 +5,7 @@ import { authenticate } from "./auth";
 import { ingestPush } from "./ingest";
 import { objectiveStub, projectStub, registryStub } from "./names";
 import { buildPack, searchContext } from "./packs";
-import { projectOf, startTask } from "./tasks";
+import { projectOf, requestCompose, startTask } from "./tasks";
 
 type Tool = { name: string; description: string; inputSchema: Record<string, unknown>; run: (args: Record<string, unknown>) => Promise<unknown> };
 
@@ -56,7 +56,11 @@ export async function handleMcp(request: Request, env: Env, _ctx: ExecutionConte
         return ingestPush(env, String(a.repo), String(a.commit));
       } },
     { name: "nest_review", description: "Review a contribution as yourself. Your model family is taken from your registration.", inputSchema: { type: "object", properties: { objective: OBJ, contribution: str("contribution id"), verdict: { type: "string", enum: ["approve", "changes", "block", "comment"] }, summary: str("one or two sentences"), confidence: { type: "number" } }, required: ["objective", "contribution", "verdict", "summary"] },
-      run: async (a) => (await objectiveOf(a)).addReview({ id: `rv-${me}-${String(a.contribution)}-${Date.now()}`, target: String(a.contribution), reviewer: me, verdict: a.verdict as "approve", confidence: Number(a.confidence ?? 0.8), summary: String(a.summary).slice(0, 2000), findings: [], triage: false }) },
+      run: async (a) => {
+        const out = await (await objectiveOf(a)).addReview({ id: `rv-${me}-${String(a.contribution)}-${Date.now()}`, target: String(a.contribution), reviewer: me, verdict: a.verdict as "approve", confidence: Number(a.confidence ?? 0.8), summary: String(a.summary).slice(0, 2000), findings: [], triage: false });
+        await requestCompose(env, String(a.objective), `${me} reviewed`);
+        return out;
+      } },
   ];
 
   let msg: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };

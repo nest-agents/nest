@@ -6,14 +6,15 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
-import { candidateBranch, contextRepo, parseWorkspaceRepo, projectRepo, registryStub } from "./names";
+import { candidateBranch, candidateRef, contextRepo, parseWorkspaceRepo, projectRepo, registryStub } from "./names";
 import type { CheckSpec } from "./projectconfig";
 import { estimateCost, gatewayHeaders, isPriced, priceFor, providerTarget } from "./models";
 import { receivePackRefs } from "./gitproto";
 
 /**
  * agent: runs a task attempt; pushes only main of its own workspace.
- * runner: composes one candidate, then runs the project's checks on it; pushes only cand-<id>, and loses
+ * runner: composes one candidate, then runs the project's checks on it; pushes only refs/nest/cand/<id> and,
+ *         when every contribution in it is approved, the buildable branch cand-<id>; and loses
  *         all git access once candidate code is running.
  * mirror: fast-forwards the project's main after an acceptance; never runs candidate code.
  * context: commits accepted context versions to the context repo; never runs candidate code.
@@ -27,6 +28,8 @@ export type ComputerProps = {
   epoch?: number;
   workspace?: string;
   candidate?: string;
+  /** Runner only: every contribution in the candidate is approved, so its buildable branch may be pushed. */
+  publish?: boolean;
 };
 
 const CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
@@ -208,10 +211,12 @@ export class Computer extends DurableObject<Env> {
    * contribution's commit in dependency order. Cherry-pick merges three ways against the commit's own
    * parent, so independent edits to one file combine and true overlaps stop with exact paths.
    */
-  async compose(props: ComputerProps, base: { remote: string; commit: string }, picks: { id: string; remote: string; commit: string }[], branch: string): Promise<{ ok: true; commit: string; tree: string } | { ok: false; at: string; paths: string[]; detail: string; partial?: string }> {
+  async compose(props: ComputerProps, base: { remote: string; commit: string }, picks: { id: string; remote: string; commit: string }[], branch: string, publish: boolean): Promise<{ ok: true; commit: string; tree: string; published: boolean } | { ok: false; at: string; paths: string[]; detail: string; partial?: string }> {
     const host = `https://${this.env.ACCOUNT_ID}.artifacts.cloudflare.net/git/${this.env.ARTIFACTS_NAMESPACE}/`;
     const sha = /^[0-9a-f]{40}$/;
-    if (!/^cand-[a-z0-9-]{4,64}$/.test(branch)) throw new Error("invalid candidate branch");
+    if (!/^cand-[a-z0-9-]{4,64}$/.test(branch) || !props.candidate || branch !== candidateBranch(props.candidate)) throw new Error("invalid candidate branch");
+    if (publish !== !!props.publish) throw new Error("publish must match the computer's props");
+    const keep = candidateRef(props.candidate);
     for (const r of [base.remote, ...picks.map((p) => p.remote)]) if (!r.startsWith(host) || !/^[A-Za-z0-9._\/:-]+$/.test(r)) throw new Error(`invalid remote ${r}`);
     for (const c of [base.commit, ...picks.map((p) => p.commit)]) if (!sha.test(c)) throw new Error(`invalid commit ${c}`);
     if (this.phase() === "host") {
@@ -235,7 +240,7 @@ export class Computer extends DurableObject<Env> {
         const conflicted = await this.sh("git diff --name-only --diff-filter=U");
         await this.sh("git cherry-pick --abort || true");
         // Keep everything that did combine, so a reconcile task can start from exactly this tree.
-        const partial = await this.sh(`git push --quiet --force origin HEAD:refs/heads/${branch} && git rev-parse HEAD`, REPO_DIR, 120);
+        const partial = await this.sh(`git push --quiet --force origin HEAD:${keep} && git rev-parse HEAD`, REPO_DIR, 120);
         return {
           ok: false, at: p.id, paths: conflicted.stdout.split("\n").filter(Boolean), detail: (picked.stderr || picked.stdout).slice(-2000),
           partial: partial.exitCode === 0 ? partial.stdout.trim().split("\n").at(-1) : undefined,
@@ -244,9 +249,13 @@ export class Computer extends DurableObject<Env> {
     }
     const head = await this.sh("git rev-parse HEAD && git rev-parse HEAD^{tree}");
     const [commit, tree] = head.stdout.trim().split("\n");
-    const push = await this.sh(`git push --quiet --force origin HEAD:refs/heads/${branch}`, REPO_DIR, 120);
+    const push = await this.sh(`git push --quiet --force origin HEAD:${keep}`, REPO_DIR, 120);
     if (push.exitCode !== 0) return { ok: false, at: "push", paths: [], detail: push.stderr.slice(-2000) };
-    return { ok: true, commit: commit!, tree: tree! };
+    if (publish) {
+      const pub = await this.sh(`git push --quiet --force origin HEAD:refs/heads/${branch}`, REPO_DIR, 120);
+      if (pub.exitCode !== 0) return { ok: false, at: "push", paths: [], detail: pub.stderr.slice(-2000) };
+    }
+    return { ok: true, commit: commit!, tree: tree!, published: publish };
   }
 
   /**
@@ -327,25 +336,27 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
 
     // Which repositories this computer may read, and the single ref it may update.
     let readable: boolean;
-    let pushRef: { repo: string; ref: string } | null;
+    let pushRef: { repo: string; refs: string[] } | null;
     switch (props.role) {
       case "agent":
         readable = isProject || !!ws;
-        pushRef = props.workspace ? { repo: props.workspace, ref: "refs/heads/main" } : null;
+        pushRef = props.workspace ? { repo: props.workspace, refs: ["refs/heads/main"] } : null;
         break;
       case "runner":
         // Git only while explicitly composing; hosting, or any unknown state, has no git access.
         if ((await computer.phase()) !== "compose") return deny("this computer has no git access outside composition");
         readable = isProject || !!ws;
-        pushRef = props.candidate ? { repo: projectRepo(props.project), ref: `refs/heads/${candidateBranch(props.candidate)}` } : null;
+        // Whether the buildable branch may be pushed was decided by Nest before composing; Outbound allows
+        // exactly this candidate's two refs.
+        pushRef = props.candidate ? { repo: projectRepo(props.project), refs: [candidateRef(props.candidate), ...(props.publish ? [`refs/heads/${candidateBranch(props.candidate)}`] : [])] } : null;
         break;
       case "mirror":
         readable = isProject;
-        pushRef = { repo: projectRepo(props.project), ref: "refs/heads/main" };
+        pushRef = { repo: projectRepo(props.project), refs: ["refs/heads/main"] };
         break;
       case "context":
         readable = isContext;
-        pushRef = { repo: contextRepo(props.project), ref: "refs/heads/main" };
+        pushRef = { repo: contextRepo(props.project), refs: ["refs/heads/main"] };
         break;
     }
     if (!pushing && !readable) return deny(`${repo} is not readable from this computer`);
@@ -356,7 +367,7 @@ export class Outbound extends WorkerEntrypoint<Env, ComputerProps> {
       // The receive-pack request begins with pkt-lines "<old> <new> <ref>"; every ref must be the allowed one.
       body = await request.arrayBuffer();
       const refs = receivePackRefs(new Uint8Array(body));
-      if (!refs.length || refs.some((r) => r !== pushRef!.ref)) return deny(`only ${pushRef!.ref} may be updated from this computer (got ${refs.join(", ") || "none"})`);
+      if (!refs.length || refs.some((r) => !pushRef!.refs.includes(r))) return deny(`only ${pushRef!.refs.join(" or ")} may be updated from this computer (got ${refs.join(", ") || "none"})`);
     }
     const secret = await computer.gitToken(repo, pushing ? "write" : "read");
     const headers = new Headers(request.headers);

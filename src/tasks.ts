@@ -5,6 +5,11 @@ import { ArtifactsClient } from "./artifacts";
 import { taskToken } from "./auth";
 import { agentComputer, objectiveStub, projectRepo, projectStub, taskWorkflowId, workspaceRepo } from "./names";
 
+/** Asks for a composition; one runs per objective, and a request during one makes it compose again. */
+export async function requestCompose(env: Env, objectiveId: string, reason: string): Promise<void> {
+  await env.COMPOSE.create({ id: `compose-${objectiveId}-${Date.now()}`, params: { objective: objectiveId, reason } }).catch(() => undefined);
+}
+
 export class TaskError extends Error {
   constructor(readonly code: string, message = code) {
     super(message);

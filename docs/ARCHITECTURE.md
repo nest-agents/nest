@@ -110,10 +110,12 @@ few humans, that breaks in three places.
    1. A fresh runner container clones the checkpoint and cherry-picks the contributions in dependency order.
       Cherry-pick is a three-way merge, so independent edits to one file combine, and a real overlap stops
       with the exact paths.
-   2. The runner pushes the result to `cand-<id>` in the project's repository, which is the runner's last
-      use of git.
+   2. The runner pushes the result to `refs/nest/cand/<id>` in the project's repository. Only when every
+      contribution in the outcome is approved does it also push the branch `cand-<id>`, which the project's
+      pipeline builds. That is the runner's last use of git.
    3. It runs the project's setup and checks on the whole tree, and is then destroyed.
-   4. The project's Worker builds `cand-<id>` as a Preview. Nest opens that URL in Browser Rendering every 30
+   4. The project's Worker builds `cand-<id>` as a Preview. An outcome whose members are not all approved
+      yet shows its preview check as held; it is composed again once the last approval arrives. Nest opens that URL in Browser Rendering every 30
       seconds until a deployment answers. That visit is the check: the page must load without uncaught
       errors, and its screenshot goes on the outcome card.
 7. **Accept.** The human accepts a ready outcome. The Project Durable Object advances the head by
