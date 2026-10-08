@@ -84,6 +84,20 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
       };
     });
 
+    // A conflict between work the new plan no longer combines (for example two competing approaches, now
+    // known to be one choice) is not a question for a human any more.
+    if (!event.payload.only?.length) {
+      await step.do("retire conflicts the plan dropped", async () => {
+        const planned = new Set(plan.planned.map((c) => c.id));
+        const dropped = (await objective.state()).candidates.filter((k) => k.status === "conflict" && k.baseVersion === plan.head.version && !planned.has(k.id));
+        for (const k of dropped) {
+          await objective.updateCandidate(k.id, { status: "superseded", note: "The plan no longer combines this work" });
+          await objective.resolveInbox(`conflict-${k.id}`, "no longer planned");
+        }
+        return { retired: dropped.map((k) => k.id) };
+      });
+    }
+
     /** Composes `order` onto the head in a fresh runner, runs the project's own setup and checks, and destroys the runner. */
     const runOn = async (id: string, order: string[]) => {
       const name = `runner-${id}`;

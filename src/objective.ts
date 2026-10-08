@@ -414,12 +414,25 @@ export class ObjectiveDO extends DurableObject<Env> {
     return this.sql.exec<Row>("SELECT * FROM contributions ORDER BY seq").toArray().map((r) => this.rowToContribution(r));
   }
 
+  /**
+   * The competing group an untagged contribution belongs to. A task created as one option in a group is
+   * that approach. When its agent marks the commits that embody the choice, its other commits are building
+   * blocks anyone may reuse; when it marks none, every commit of the task is the approach.
+   */
+  private approachOf(task: string | null): string | null {
+    if (!task) return null;
+    const t = this.sql.exec<Row>("SELECT alternative FROM tasks WHERE id = ?", task).toArray()[0];
+    if (!t?.alternative) return null;
+    const marked = this.sql.exec<Row>("SELECT 1 FROM contributions WHERE task = ? AND alternative IS NOT NULL LIMIT 1", task).toArray()[0];
+    return marked ? null : String(t.alternative);
+  }
+
   private rowToContribution(r: Row): Contribution {
     const id = String(r.id);
     return {
       id, seq: Number(r.seq), task: r.task ? String(r.task) : null, epoch: Number(r.epoch), author: String(r.author), repo: String(r.repo),
       commit: String(r.commit_sha), parent: String(r.parent), title: String(r.title), message: String(r.message),
-      alternative: r.alternative ? String(r.alternative) : null, supersedes: r.supersedes ? String(r.supersedes) : null,
+      alternative: r.alternative ? String(r.alternative) : this.approachOf(r.task ? String(r.task) : null), supersedes: r.supersedes ? String(r.supersedes) : null,
       status: String(r.status) as ContributionStatus, paths: JSON.parse(String(r.paths)), special: Number(r.special) === 1,
       requires: this.sql.exec<{ requires: string }>("SELECT requires FROM deps WHERE contribution = ? ORDER BY requires", id).toArray().map((x) => x.requires),
       declared: JSON.parse(String(r.declared)),

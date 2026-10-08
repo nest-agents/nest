@@ -166,7 +166,8 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           const openai = reviewer.family === "openai";
           for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
             try {
-              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: openai ? 6000 : 1800, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
+              // Larger changes produce longer verdicts, and Workers AI's model reasons before it answers.
+              const r = await chat(this.env, routeFor(this.env, reviewer), messages, { maxTokens: openai || reviewer.family === "workers-ai" ? 6000 : 4000, json: openai, effort: openai ? "low" : undefined, ...spend, metadata: { objective: objectiveId, contribution: id, reviewer: reviewer.id } });
               parsed = parseJsonReply<Verdictish>(r.text);
               if (!parsed) note = "Reviewer reply was not valid JSON.";
             } catch (e) {
@@ -177,7 +178,8 @@ ${wrapUntrusted(input.nonce, "diff", input.diff)}`;
           const findings = (parsed?.findings ?? []).slice(0, 20).map((f) => ({ path: f.path, line: f.line, severity: f.severity, text: String(f.text ?? "").slice(0, 600), cite: f.cite }));
           const cites = findings.map((f) => (f.cite ? parseCitation(f.cite) : null)).filter((c): c is Citation => !!c);
           await objective.addReview({
-            id: `rv-${reviewer.id}-${id}`, target: id, reviewer: reviewer.id, verdict,
+            // A later round is a new review: an attempt that ended without a verdict must not block its retry.
+            id: round ? `rv-${reviewer.id}-${id}-r${round}` : `rv-${reviewer.id}-${id}`, target: id, reviewer: reviewer.id, verdict,
             confidence: typeof parsed?.confidence === "number" ? parsed.confidence : 0,
             summary: String(parsed?.summary ?? note).slice(0, 2000), findings, triage: false,
           }, cites);
