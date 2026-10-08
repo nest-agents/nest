@@ -425,7 +425,7 @@ function checksHtml(c) {
   return `<div class="checks">${c.checks.map((k) => `<span class="chk ${kind(k)}" title="${esc(k.id)}: ${says[kind(k)]}"></span>`).join("")}<span style="font-size:12.5px;color:var(--muted);margin-left:6px">${pass} of ${c.checks.length} checks</span></div>`;
 }
 
-const statusLabel = { composing: "Composing", checking: "Checking", ready: "Ready", waiting: "Waiting on review", incomplete: "Incomplete", failing: "Breaks a check", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
+const statusLabel = { composing: "Composing", checking: "Checking", retrying: "Composing again", ready: "Ready", waiting: "Waiting on review", incomplete: "Incomplete", failing: "Breaks a check", conflict: "Conflict", outdated: "Outdated", accepted: "Accepted", superseded: "Superseded" };
 
 function inboxHtml() {
   const items = openInbox();
@@ -494,7 +494,7 @@ function outcomeCard(c) {
     ${shotHtml(c)}
     <div class="picks">${c.order.map((id) => `<span class="pick"><span class="id">${esc(short(id))}</span>${esc(S.contributions.find((x) => x.id === id)?.title ?? "")}</span>`).join("")}</div>
     ${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}
-    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${previewLink(c)}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${owner() && ["failing", "incomplete"].includes(c.status) && c.commit && !/^Being repaired/.test(c.note ?? "") ? `<button class="btn small" data-repair="${esc(c.id)}" type="button">Repair with an agent</button>` : ""}${owner() && c.status === "conflict" ? `<button class="btn small" data-reconcile="${esc(c.id)}" type="button">Reconcile with an agent</button>` : ""}</div></div>`;
+    <div class="row"><button class="btn small" data-cand="${esc(c.id)}" type="button">Show on map</button>${previewLink(c)}${owner() && c.status === "ready" ? `<button class="btn small primary" data-accept="${esc(c.id)}" type="button">Accept checkpoint ${S.head.version + 1}</button>` : ""}${owner() && ["failing", "incomplete"].includes(c.status) && c.commit && !/^Being repaired/.test(c.note ?? "") ? `<button class="btn small" data-repair="${esc(c.id)}" type="button">Repair with an agent</button>` : ""}${owner() && ["failing", "incomplete", "outdated"].includes(c.status) && c.checks.some((k) => k.status === "ERROR") ? `<button class="btn small" data-again="${esc(c.id)}" type="button">Compose again</button>` : ""}${owner() && c.status === "conflict" ? `<button class="btn small" data-reconcile="${esc(c.id)}" type="button">Reconcile with an agent</button>` : ""}</div></div>`;
 }
 
 function inspectHtml() {
@@ -860,7 +860,8 @@ document.addEventListener("click", (e) => {
       await api(`${BASE}/compose`, { method: "POST", body: "{}" });
     }, `Kept ${short(keep)}; recomposing`);
   }
-  if (t.dataset.again) return act(() => api(`${BASE}/contributions/${t.dataset.again}/review-again`, { method: "POST", body: "{}" }), "Asked agents to review again");
+  if (t.dataset.again && t.dataset.again.startsWith("c_")) return act(() => api(`${BASE}/contributions/${t.dataset.again}/review-again`, { method: "POST", body: "{}" }), "Asked agents to review again");
+  if (t.dataset.again) return act(() => api(`${BASE}/recompose`, { method: "POST", body: JSON.stringify({ ids: [t.dataset.again] }) }), "Composing again");
   if (t.dataset.resolve) return act(() => api(`${BASE}/inbox/${t.dataset.resolve}/resolve`, { method: "POST", body: "{}" }), "Dismissed");
   if (t.dataset.review) {
     const summary = document.getElementById(`rv-${t.dataset.review}`)?.value.trim() || "";

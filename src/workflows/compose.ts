@@ -159,7 +159,8 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         if (seen.deployed) return seen.check;
         last = seen.check.detail;
       }
-      return { id: "preview", status: "FAIL", detail: `no deployment answered within ${PREVIEW_PROBES / 2} minutes of the push; last: ${last}`.slice(0, 600) };
+      // Nothing deployed: the project's pipeline did not build the branch. That is not the code's doing.
+      return { id: "preview", status: "ERROR", detail: `no deployment answered within ${PREVIEW_PROBES / 2} minutes of the push, so the project's pipeline did not build ${candidateBranch(id)}; last: ${last}`.slice(0, 600) };
     };
 
     // What the checkpoint itself passes. An outcome that fails only what the checkpoint also fails is
@@ -261,7 +262,16 @@ export class ComposeWorkflow extends WorkflowEntrypoint<Env, Params> {
         const failed = checks.filter((x) => x.status !== "PASS" && x.status !== "PENDING");
         const state = await objective.state();
         const membersApproved = c.order.every((id) => state.contributions.find((x) => x.id === id)?.status === "approved");
-        const broken = failed.filter((f) => passingAtHead.has(f.id));
+        // A preview that never deployed is composed again once: a new composition is a new commit, which
+        // the pipeline builds afresh. The second time, the outcome stays incomplete for a human to see.
+        if (preview?.status === "ERROR" && /did not build/.test(preview.detail) && !(await objective.previewRetried(c.id))) {
+          await objective.markPreviewRetried(c.id);
+          await objective.updateCandidate(c.id, { status: "outdated", commit: composed.commit, checks: withHead(checks), previewReady: false, conflict: null }, { svc: "Workers Builds", text: `${c.name}: its preview did not deploy; composing it again` });
+          await env.COMPOSE.create({ id: `compose-${objectiveId}-retry-${c.id}-${Date.now()}`, params: { objective: objectiveId, reason: "a preview did not deploy", only: [c.id] } }).catch(() => undefined);
+          return { id: c.id, status: "retrying" };
+        }
+        // An ERROR is Nest's or the pipeline's, never the code's: it leaves an outcome incomplete, not broken.
+        const broken = failed.filter((f) => f.status !== "ERROR" && passingAtHead.has(f.id));
         const pending = checks.some((x) => x.status === "PENDING");
         const status = broken.length ? "failing" : failed.length ? "incomplete" : membersApproved && !pending ? "ready" : "waiting";
         const passed = checks.filter((x) => x.status === "PASS").length;

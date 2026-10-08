@@ -407,6 +407,15 @@ export class ObjectiveDO extends DurableObject<Env> {
     return v ? JSON.parse(v) : [];
   }
 
+  /** An outcome whose preview never deployed is composed again once; this records that it was. */
+  previewRetried(candidateId: string): boolean {
+    return this.meta(`preview-retry:${candidateId}`) === "1";
+  }
+
+  markPreviewRetried(candidateId: string): void {
+    this.setMeta(`preview-retry:${candidateId}`, "1");
+  }
+
   /** Check results for an accepted checkpoint under a context version: what "not broken" means for outcomes on it. */
   baseline(key: string): { id: string; status: string; detail: string }[] | null {
     const v = this.meta(`baseline:${key}`);
