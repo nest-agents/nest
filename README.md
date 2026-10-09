@@ -191,6 +191,11 @@ pnpm exec wrangler deploy --secrets-file <file>
 Open the site, choose Sign in, paste the owner token, and create a project. `pnpm test` runs the unit tests;
 `pnpm typecheck` checks the types.
 
+Two things seen on fresh deploys: the `workers.dev` address can answer `error code: 1042` for a minute after
+the first deploy while the subdomain propagates; and deleting the Worker leaves its container application
+behind, so a later deploy under the same name stops at "could not finish applying its Durable Object-managed
+Container application settings" until `wrangler containers delete <id>` removes the old one.
+
 ## Repository
 
 | Path | Contents |
